@@ -47,6 +47,12 @@ body{
 .vol select{font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);padding:4px 6px}
 .spacer{flex:1}
 @media (max-width:480px){.spacer{display:none}}
+/* デバッグ用の行（URL に ?debug があるときだけ debug.js が hidden を外す） */
+.console[hidden]{display:none}
+.debug{font-size:13px;color:var(--muted);padding-block:5px}
+.debug button{padding:2px 10px}
+.debug .vol select{padding:1px 4px}
+.dbg-info{flex:1 1 20em;font-variant-numeric:tabular-nums}
 </style>
 
 <div class="top">
@@ -65,6 +71,13 @@ body{
   <span class="spacer"></span>
   <button id="btn-line" type="button">別の路線へ</button>
   <button id="btn-full" type="button">全画面</button>
+</div>
+
+<div class="console debug" id="debug" hidden>
+  <label class="vol" for="dbg-rate">早送り <select id="dbg-rate"><option value="1">×1</option><option value="2">×2</option><option value="4">×4</option><option value="8">×8</option></select></label>
+  <button id="dbg-biome" type="button">次のバイオームへ</button>
+  <button id="dbg-station" type="button">次の駅の手前へ</button>
+  <output id="dbg-info" class="dbg-info"></output>
 </div>
 
 <script type="module" src="src/main.js"></script>

@@ -10,5 +10,6 @@ export const state = {
   nextJoint: 120, bobs: [], hits: [],
   // 進行（journey.js が書き換える）: phase 'run' | 'brake' | 'stop' | 'depart'、station は stations.js の駅オブジェクト
   phase: 'run', station: null, stopT: 0, door: 0, accel: 0,
+  rate: 1, // 再生速度（デバッグ用の早送り。1フレームに update() を rate 回くり返す。1 以外の間は音を止める）
   passMode: 'on' // 乗客の表示: 'on'（あり）| 'sil'（シルエット）| 'off'（なし）
 };

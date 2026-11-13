@@ -55,7 +55,7 @@ export function initAudio() {
   hum.connect(hg); hg.connect(master); hs.connect(hl); hl.connect(hng); hng.connect(master); hum.start(); hs.start();
   driveAudio(true);
 }
-const running = () => soundOn && ac && ac.state === 'running';
+const running = () => soundOn && ac && ac.state === 'running' && state.rate === 1; // 早送り中は鳴らさない
 
 /* 速度・加速度・進行に合わせて常時音を動かす（main.js から 0.1 秒ごと）。ac が無ければ何もしない */
 export function driveAudio(now = false) {
@@ -136,5 +136,5 @@ export function sfx(name, arg) {
 
 export function syncAudio() {
   if (!ac) return;
-  if (soundOn && state.playing && !document.hidden) ac.resume().catch(() => {}); else ac.suspend().catch(() => {});
+  if (soundOn && state.playing && !document.hidden && state.rate === 1) ac.resume().catch(() => {}); else ac.suspend().catch(() => {});
 }

@@ -1,4 +1,4 @@
-import { state } from './state.js';
+import { RAIL, state } from './state.js';
 import { nextStation, stationAt } from './stations.js';
 import { sfx } from './audio.js';
 
@@ -67,6 +67,14 @@ export function seekJourney(d, stopT = 0) {
   const v = Math.sqrt(2 * A_ACCEL * Math.max(0, back));
   if (v < vc - 0.3) { state.phase = 'depart'; state.speed = v; departT = JERK_T; }
   else { state.phase = 'run'; state.speed = vc; }
+}
+
+/* 地点 d へ飛ぶ: 進行を置き直し、継ぎ目の予約（音と揺れ）を捨てて、次の継ぎ目を飛んだ先に合わせる。
+   継ぎ目は 120 + RAIL × n の地点にある（出発地点 d = 0 では次の継ぎ目が 120） */
+export function jumpTo(d, stopT = 0) {
+  seekJourney(d, stopT);
+  state.nextJoint = 120 + RAIL * (Math.floor((state.dist - 120) / RAIL) + 1);
+  state.bobs.length = 0; state.hits.length = 0;
 }
 
 /* 1フレーム進める。state.speed と state.dist はここで決める */

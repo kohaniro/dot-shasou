@@ -9,6 +9,7 @@ import { drawPassengers } from './passengers.js';
 import { ac, soundOn, click, driveAudio } from './audio.js';
 import { stepJourney } from './journey.js';
 import { setSeed, seedFromHash, setPlaying, initUI } from './ui.js';
+import { initDebug } from './debug.js';
 
 const cv = document.getElementById('view');
 const cx = cv.getContext('2d');
@@ -33,7 +34,7 @@ function scheduleHits() {
     const dt = d > dist && speed > 0 ? (d - dist) / speed : 0;
     if (bob) state.bobs.push(t + dt);
     // 遅いほど小さく（停車寸前の継ぎ目はかすかに）
-    if (soundOn && ac && ac.state === 'running') click(ac.currentTime + 0.02 + dt, s * (0.25 + 0.75 * Math.min(1, speed / 200)));
+    if (soundOn && ac && ac.state === 'running' && state.rate === 1) click(ac.currentTime + 0.02 + dt, s * (0.25 + 0.75 * Math.min(1, speed / 200)));
   }
 }
 
@@ -44,7 +45,7 @@ function update(dt) {
   while (state.dist >= state.nextJoint) { jointPattern(state.nextJoint); state.nextJoint += RAIL; }
   scheduleHits();
   audioTimer -= dt;
-  if (audioTimer <= 0) { audioTimer = 0.1; driveAudio(); }
+  if (audioTimer <= 0) { audioTimer = 0.1; if (state.rate === 1) driveAudio(); } // 早送り中は音を止めているので動かさない
   speedTimer -= dt;
   if (speedTimer <= 0) {
     speedTimer = 0.5;
@@ -109,7 +110,9 @@ function render() {
 }
 function frame(now) {
   const dt = Math.min(0.05, (now - state.last) / 1000); state.last = now;
-  if (state.playing) { update(dt); render(); }
+  // 早送り（デバッグ用）は dt を大きくせず、同じ dt の update() を rate 回くり返す（停車・発車の判定や継ぎ目の予約を崩さない）
+  if (state.playing) { for (let i = 0; i < state.rate; i++) update(dt); render(); }
+  if (debugTick) debugTick(now);
   requestAnimationFrame(frame);
 }
 
@@ -127,6 +130,7 @@ if (window.ResizeObserver) new ResizeObserver(fit).observe(stage);
 
 /* ---------- boot ---------- */
 initUI(render, rebuild);
+const debugTick = initDebug(render); // URL に ?debug があるときだけ有効（無ければ null）
 const h0 = seedFromHash();
 setSeed(h0 !== null ? h0 : 1000 + Math.floor(Math.random() * 9000));
 cv.width = W * SUB; cv.height = VH * SUB; cx.imageSmoothingEnabled = false;
