@@ -1,0 +1,69 @@
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>ドット車窓</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap">
+<style>
+/* layout: one-screen stage. The canvas sits centered at a whole-pixel scale; a slim console below it, lettered like a door-top LED display. */
+:root{
+  --bg:#12151a;
+  --panel:#1b2027;
+  --line:#313a46;
+  --fg:#d9dee4;
+  --muted:#8792a0;
+  --amber:#f2b84b;
+  --font-ui:"DotGothic16","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,monospace;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{
+  box-sizing:border-box;
+  background:var(--bg);color:var(--fg);
+  font-family:var(--font-ui);font-size:15px;line-height:1.4;
+  display:flex;flex-direction:column;gap:10px;
+  padding-block:12px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+}
+.top{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 16px}
+.top h1{margin:0;font-size:18px;font-weight:400;letter-spacing:.12em}
+.led{color:var(--amber);font-variant-numeric:tabular-nums;letter-spacing:.06em}
+.led .sep{color:var(--muted);margin-inline:.5em}
+#stage{flex:1;min-height:0;min-width:0;display:flex;align-items:center;justify-content:center;background:var(--bg)}
+#stage:fullscreen{background:#000}
+#view{display:block;image-rendering:crisp-edges;image-rendering:pixelated;background:#000;max-width:100%}
+.console{
+  display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;
+  background:var(--panel);border:1px solid var(--line);padding:8px 10px;
+}
+.console button{
+  font:inherit;color:var(--fg);background:transparent;
+  border:1px solid var(--line);padding:5px 12px;cursor:pointer;
+}
+.console button:hover{border-color:var(--muted)}
+.console button[aria-pressed="true"]{color:var(--bg);background:var(--amber);border-color:var(--amber)}
+.console button:focus-visible,.console input:focus-visible,.console select:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.vol{display:flex;align-items:center;gap:8px;color:var(--muted)}
+.vol input{width:110px;max-width:40vw;accent-color:var(--amber)}
+.vol select{font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);padding:4px 6px}
+.spacer{flex:1}
+@media (max-width:480px){.spacer{display:none}}
+</style>
+
+<div class="top">
+  <h1>ドット車窓</h1>
+  <div class="led" aria-live="off"><span id="line-label">路線 ----</span><span class="sep">/</span><span id="speed-label">-- km/h</span></div>
+</div>
+
+<div id="stage"><canvas id="view" width="640" height="260" aria-label="電車の車内から向かいの窓越しに流れる街の景色"></canvas></div>
+
+<div class="console">
+  <button id="btn-sound" type="button" aria-pressed="false">音を出す</button>
+  <label class="vol" for="vol">音量 <input id="vol" type="range" min="0" max="100" value="60"></label>
+  <button id="btn-pause" type="button" aria-pressed="false">一時停止</button>
+  <label class="vol" for="style">絵柄 <select id="style"><option value="real">写実</option><option value="soft">淡彩</option><option value="game">ゲーム風 16色</option><option value="mono">モノクロ 4色</option></select></label>
+  <button id="btn-pass" type="button" aria-pressed="true">乗客あり</button>
+  <span class="spacer"></span>
+  <button id="btn-line" type="button">別の路線へ</button>
+  <button id="btn-full" type="button">全画面</button>
+</div>
+
+<script type="module" src="src/main.js"></script>
