@@ -66,3 +66,30 @@ export const MEADOW = ['#7fa353', '#739a50'];            // 山あいの草地
 export const MOUNT_FAR = '#3f7358';                      // 遠景の手前の尾根
 export const ROCK = '#8d8c84', CONC = '#b5b4aa', EARTH = '#9a7f62'; // 岩・石積み、コンクリート、土
 export const STREAM = '#6fb0cc', FOAM = '#e8f3f4', GRAVEL = '#c9c7b6'; // 渓流、白波、河原
+/* 川と橋の色 */
+export const RIVER = [                                   // 水面（奥 → 手前の4段）。川ごとに1組
+  ['#b4d6e6', '#93c1dc', '#77aad0', '#6297c2'],          // 青
+  ['#b6d8dc', '#96c2cc', '#7aaaba', '#6496aa'],          // 青緑
+  ['#b9cfd2', '#9db8be', '#869fa8', '#718a96']           // くすんだ灰緑（街なかの川）
+];
+export const GLINT = '#eef7fa';                          // 水面のきらめき
+export const LEVEE = ['#86a85a', '#6f9450'];             // 堤防の草（日なた / かげ）
+export const REED = ['#b0ae62', '#93a155'];              // ヨシ
+export const DIRT = '#cdb98e';                           // グラウンドの土
+export const REVET = '#bdbcb1', REVET_D = '#a3a298';     // コンクリート護岸
+export const TRUSS_PAINT = ['#7fae90', '#b65a44', '#72a6c6', '#98a1a5', '#d6cfa9', '#55806c']; // トラスの塗装: 淡い緑、さび止めの赤、水色、グレー、クリーム、深緑
+/* トンネルの色 */
+export const TUN_DARK = '#0b0d13';                       // 闇
+export const TUN_LINING = {                              // 覆工: 地 / 明るいむら / 目地・かげ
+  conc: ['#9a9b93', '#abaca3', '#6c6d68'],               // コンクリート
+  brick: ['#96604a', '#a87258', '#5a4038'],              // れんが
+  shot: ['#868479', '#97958a', '#5f5e59']                // 吹き付け
+};
+export const TUN_LAMP = { sodium: ['#ffae45', '#ffe6b0'], fluo: ['#d8f0e2', '#ffffff'], led: ['#dfe9ff', '#ffffff'] }; // 灯具: 光の色味 / 芯
+export const TUN_EXIT = '#35d68a', TUN_SIGNAL = '#8fc6ff'; // 非常口の灯、青白い標識灯
+export const PORTAL = {                                  // 坑門: 面壁 / 明るい縁（笠石・アーチ環）/ 目地
+  conc: ['#b9b8ae', '#d3d2c7', '#93928a'],
+  brick: ['#9c6650', '#cdc8b8', '#6c463a'],
+  stone: ['#a09d90', '#c4c1b3', '#74726a']
+};
+export const SPAN_PAINT = ['#e6e3d8', '#c2604f', '#7aa3c8', '#9fb5a2']; // 遠くの道路橋

@@ -9,6 +9,8 @@ import { nearResi, nearSuburb, midHouse, vegGround, lotGround } from './suburb.j
 import { nearRural, paddyGround, hills, midFarm, midGreenhouses, midGrove, midPylon } from './rural.js';
 import { seaFar, farWet, seaMidWater, seaMid, seaNearWater, seaNear, seaGroundMid, seaGroundNear } from './sea.js';
 import { farRange, farRidge, midSlope, midMount, mountGround, nearBank, nearMount } from './mountain.js';
+import { riverBand } from './bridge.js';
+import { tunnelHill } from './tunnel.js';
 
 /* ---------- 遠景・中景・近景: world() の連続値を見て、各バイオームの部品を並べる ---------- */
 
@@ -56,6 +58,8 @@ export function drawFar(g, i, r, L) {
     if (!wet) farTower(g, r, x, base, w, h);
     x += w + (r() < 0.4 ? 1 : 0);
   }
+  riverBand(g, L, i); // 橋のある地点: 川（既存の絵の上から描き直す。チャンクの乱数は使わない）
+  tunnelHill(g, L, i); // トンネルのある地点: くぐる山（既存の絵の奥に描き足す。チャンクの乱数は使わない）
 }
 
 /* ---------- mid ---------- */
@@ -98,6 +102,8 @@ export function drawMid(g, i, r, L) {
     } else { w = Math.min(ri(r, 6, 10), rem); if (w > 4) midHouse(g, r, x + 1, base, w - 2); }
     x += w + (r() < 0.4 ? ri(r, 1, 2) : 0);
   }
+  riverBand(g, L, i);
+  tunnelHill(g, L, i);
 }
 
 /* ---------- near ---------- */
@@ -133,4 +139,6 @@ export function drawNear(g, i, r, L) {
     const w = NEAR_BUILD[pickBiome(e, r)](g, r, x, base, rem, e);
     x += w + (r() < 0.35 ? ri(r, 1, 2) : 0);
   }
+  riverBand(g, L, i);
+  tunnelHill(g, L, i);
 }

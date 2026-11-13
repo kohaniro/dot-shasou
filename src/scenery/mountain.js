@@ -3,6 +3,7 @@ import { hash32, ri, pick, vnoise } from '../rng.js';
 import { R, shade, tint, ink, ell, GREENS, GRASS, HOUSE_WALL, ROOF, WIN_D, WATER, RICE, AZE, HILL_BACK, TORII, CEDAR, BROAD, BAMBOO, MEADOW, MOUNT_FAR, ROCK, CONC, EARTH, STREAM, FOAM, GRAVEL } from '../palette.js';
 import { world } from '../world.js';
 import { distAt } from '../layers.js';
+import { tunnelProx } from '../features.js';
 import { hz, tree, bush, utilityPole } from './common.js';
 import { midHouse } from './suburb.js';
 import { bShed, midPylon } from './rural.js';
@@ -16,7 +17,12 @@ const TRUNK = '#5a4638';
 
 /* 谷の開け具合 0（森や斜面が迫る）..1（谷が開けて奥まで見通せる）。走行距離の低い周波数のノイズなので、
    全レイヤーが同じ地点で同じ値になり、閉じた区間と開けた区間が十数秒ごとに入れ替わる */
-export function openAt(d) { return sstep(0.4, 0.6, 0.72 * vnoise(d / 1500, 31) + 0.28 * vnoise(d / 520, 32)); }
+export function openAt(d) {
+  const o = sstep(0.4, 0.6, 0.72 * vnoise(d / 1500, 31) + 0.28 * vnoise(d / 520, 32));
+  const t = tunnelProx(d, TUNNEL_RAMP); // 坑口の近くは閉じる（森の斜面が迫る）。坑口から TUNNEL_RAMP より離れた地点の値は変えない
+  return t > 0 ? o * (1 - t) : o;
+}
+const TUNNEL_RAMP = 700;
 /* 山の高さに掛ける重み: 山間の重みが半分を超えたあたりで、山はもう十分に高い */
 const rise = m => Math.min(1, m * 1.3);
 /* チャンクのどこかに山間がかかっているか（かかっていなければ何も描かない） */
@@ -46,7 +52,7 @@ function crown(g, x, y, kind, big, p) {
     ell(g, x, y, 5, 4, c); ell(g, x - 2, y - 2, 2, 1, cl); R(g, x - 2, y + 3, 7, 1, cd); R(g, x + 3, y + 1, 2, 2, cd);
   }
 }
-function forest(g, L, i, base, H, PAD, o) {
+export function forest(g, L, i, base, H, PAD, o) {
   const cw = L.cw, { cell, rs, big, salt } = o;
   const pal = [CEDAR, BROAD].map(set => set.map(c => { const b = hz(c, o.haze); return [b, tint(b, 0.15), shade(b, 0.2)]; }));
   const fill = shade(hz(CEDAR[2], o.haze), 0.12);

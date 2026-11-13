@@ -5,6 +5,8 @@ import { pickKind } from '../world.js';
 import { env } from '../layers.js';
 import { seaTrack } from './sea.js';
 import { mountSeg } from './mountain.js';
+import { bridgeTrack } from './bridge.js';
+import { tunnelTrack } from './tunnel.js';
 
 /* ---------- trackside: 線路際の地面。都心は壁・フェンス、住宅街は生垣、郊外・田園は草地・柵・用水路・あぜ道 ---------- */
 function wall(g, r, x, len) {
@@ -82,4 +84,6 @@ export function drawTrackside(g, i, r, L) {
     SEG[pickKind(e, r, SEG_RATE)](g, r, x, len);
     x += len;
   }
+  bridgeTrack(g, L, i); // 橋のある地点: 取り付け・橋台・桁（既存の絵の上から描き直す）
+  tunnelTrack(g, L, i); // トンネルのある地点: 切り通し・坑門・くぐる山（既存の絵の上から描き直す）
 }

@@ -1,4 +1,5 @@
-import { state } from './state.js';
+import { W, state } from './state.js';
+import { featureMix } from './features.js';
 
 /* ---------- audio (Web Audio 合成) ---------- */
 /* 音量の定数はここにまとめる（耳で確かめていないので、どれも控えめ。調整はこの表だけ触ればよい） */
@@ -14,12 +15,35 @@ export const VOL = {
   thunk: 0.12,      // 戸当たりの音
   chime: 0.035,     // ドアチャイム「ピンポン」
   melody: 0.03,     // 発車の合図
-  hum: 0.004        // 空調のうなり（常時。止まると目立つ程度）
+  hum: 0.004,       // 空調のうなり（常時。止まると目立つ程度）
+  tunnel: 0.5,      // トンネル: 低域の共鳴（こもった響き）。巡航時・トンネルの中
+  tunnelEcho: 0.5,  // トンネル: 継ぎ目の音を反響バスへ送る量
+  bridge: 0.8,      // 鉄橋: 金属的な鳴り「ゴーッ」。巡航時・橋の上
+  bridgeRing: 0.35  // 鉄橋: 継ぎ目の音に足す金属の響き
+};
+/* トンネルの中での変わり方（どれも featureMix().tunnel に比例して効く） */
+export const TUNNEL = {
+  rumbleBoost: 0.35, // 走行音を何割増しにするか
+  rumbleCut: 0.2,    // 走行音のローパスを何割下げるか（こもらせる）
+  windCut: 0.7,      // 風切り音を何割下げるか
+  resFreq: 250,      // 低域の共鳴の中心（Hz）
+  resQ: 2.5,
+  echoDelay: 0.085,  // 反響の遅れ（秒）
+  echoFb: 0.35,      // 反響のくり返しの強さ（1 未満。大きいほど長く残る）
+  echoTone: 1200     // 反響のローパス（Hz。くり返すたびにこもる）
+};
+/* 鉄橋の上での変わり方（featureMix().bridge に比例して効く） */
+export const BRIDGE = {
+  freqs: [520, 780, 1130], // 鳴りの共鳴（Hz。白色ノイズのバンドパス）
+  q: 9,
+  ringFreq: 1900,    // 継ぎ目の金属の響きの中心（Hz）
+  ringQ: 14,
+  ringDur: 0.32      // その減衰の長さ（秒）
 };
 const V_CRUISE = 240;
 
 export let ac = null, master = null, white = null, rumbleF = null, motor = null, soundOn = false, volume = 0.6;
-let rumbleG = null, windG = null, motorG = null, motorF = null, brakeG = null, brakeF = null;
+let rumbleG = null, windG = null, motorG = null, motorF = null, brakeG = null, brakeF = null, tunG = null, bridgeG = null, echoIn = null;
 export function setSoundOn(v) { soundOn = v; }
 export function setVolume(v) { volume = v; }
 const loopNoise = buf => { const s = ac.createBufferSource(); s.buffer = buf; s.loop = true; return s; };
@@ -53,6 +77,21 @@ export function initAudio() {
   const hs = loopNoise(brown), hl = ac.createBiquadFilter(); hl.type = 'lowpass'; hl.frequency.value = 300;
   const hg = ac.createGain(), hng = ac.createGain(); hg.gain.value = VOL.hum; hng.gain.value = VOL.hum * 6;
   hum.connect(hg); hg.connect(master); hs.connect(hl); hl.connect(hng); hng.connect(master); hum.start(); hs.start();
+  // トンネル: 走行音と同じブラウンノイズを低域のバンドパスに通した共鳴（音量は driveAudio で動かす）
+  const ts = loopNoise(brown), tf = ac.createBiquadFilter(); tf.type = 'bandpass'; tf.frequency.value = TUNNEL.resFreq; tf.Q.value = TUNNEL.resQ;
+  tunG = ac.createGain(); tunG.gain.value = 0;
+  ts.connect(tf); tf.connect(tunG); tunG.connect(master); ts.start();
+  // トンネル: 継ぎ目の音の反響バス（echoIn → 遅延 → ローパス → master、ローパス → フィードバック → 遅延）。click() がトンネルの中でだけ送る
+  echoIn = ac.createGain(); echoIn.gain.value = 1;
+  const ed = ac.createDelay(0.5); ed.delayTime.value = TUNNEL.echoDelay;
+  const el = ac.createBiquadFilter(); el.type = 'lowpass'; el.frequency.value = TUNNEL.echoTone;
+  const ef = ac.createGain(); ef.gain.value = Math.min(0.9, TUNNEL.echoFb);
+  echoIn.connect(ed); ed.connect(el); el.connect(master); el.connect(ef); ef.connect(ed);
+  // 鉄橋: 白色ノイズを共鳴の強いバンドパス数本に通した鳴り（音量は driveAudio で動かす）
+  const gs = loopNoise(white);
+  bridgeG = ac.createGain(); bridgeG.gain.value = 0;
+  for (const f of BRIDGE.freqs) { const b = ac.createBiquadFilter(); b.type = 'bandpass'; b.frequency.value = f; b.Q.value = BRIDGE.q; gs.connect(b); b.connect(bridgeG); }
+  bridgeG.connect(master); gs.start();
   driveAudio(true);
 }
 const running = () => soundOn && ac && ac.state === 'running' && state.rate === 1; // 早送り中は鳴らさない
@@ -63,9 +102,13 @@ export function driveAudio(now = false) {
   try {
     const v = Math.max(0, state.speed), vn = Math.min(1.1, v / V_CRUISE), T = ac.currentTime, tc = now ? 0.01 : 0.15;
     const acc = state.phase === 'depart' ? Math.min(1, Math.max(0, state.accel / 8)) : 0;
-    rumbleG.gain.setTargetAtTime(VOL.rumble * Math.pow(vn, 1.3), T, tc);
-    rumbleF.frequency.setTargetAtTime(180 + v, T, tc);
-    windG.gain.setTargetAtTime(VOL.wind * vn * vn, T, tc);
+    const { tunnel: tu, bridge: br } = featureMix(state.dist + W / 2); // 席の位置がトンネル・橋の中か（0..1）
+    rumbleG.gain.setTargetAtTime(VOL.rumble * Math.pow(vn, 1.3) * (1 + TUNNEL.rumbleBoost * tu), T, tc);
+    rumbleF.frequency.setTargetAtTime((180 + v) * (1 - TUNNEL.rumbleCut * tu), T, tc);
+    windG.gain.setTargetAtTime(VOL.wind * vn * vn * (1 - TUNNEL.windCut * tu), T, tc);
+    // 速度に比例させるので、停車中はどちらも 0
+    tunG.gain.setTargetAtTime(VOL.tunnel * Math.pow(vn, 1.3) * tu, T, tc);
+    bridgeG.gain.setTargetAtTime(VOL.bridge * Math.pow(vn, 1.3) * br, T, tc);
     motor.frequency.setTargetAtTime(Math.max(20, 18 + v * (0.385 + 0.06 * acc)), T, tc);
     motorF.frequency.setTargetAtTime(260 + 260 * acc, T, tc);
     motorG.gain.setTargetAtTime(VOL.motor * Math.min(1, vn * 2.5) + VOL.motorAccel * acc * Math.min(1, v / 20 + 0.3), T, tc);
@@ -76,8 +119,10 @@ export function driveAudio(now = false) {
   } catch (e) { console.warn('driveAudio', e); }
 }
 
-export function click(when, strength) {
+/* 継ぎ目の音。mix は featureMix() の { tunnel, bridge }（省略可）: トンネルでは反響、橋では金属の響きを足す */
+export function click(when, strength, mix = null) {
   strength *= VOL.click;
+  const tu = mix ? mix.tunnel : 0, br = mix ? mix.bridge : 0;
   const src = ac.createBufferSource(); src.buffer = white;
   const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 850 + Math.random() * 200; bp.Q.value = 1.1;
   const g = ac.createGain();
@@ -89,6 +134,18 @@ export function click(when, strength) {
   const og = ac.createGain();
   og.gain.setValueAtTime(0.55 * strength, when); og.gain.exponentialRampToValueAtTime(0.001, when + 0.13);
   o.connect(og); og.connect(master); o.start(when); o.stop(when + 0.15);
+  if (tu > 0 && echoIn) { // 反響バスへ（単発の音が終われば send も切れて回収される）
+    const send = ac.createGain(); send.gain.value = VOL.tunnelEcho * tu;
+    g.connect(send); og.connect(send); send.connect(echoIn);
+  }
+  if (br > 0) { // 金属の響き: 高めの細いバンドパスで、減衰を長く
+    const rs = ac.createBufferSource(); rs.buffer = white;
+    const rf = ac.createBiquadFilter(); rf.type = 'bandpass'; rf.frequency.value = BRIDGE.ringFreq * (0.94 + Math.random() * 0.12); rf.Q.value = BRIDGE.ringQ;
+    const rg = ac.createGain();
+    rg.gain.setValueAtTime(Math.max(0.0011, VOL.bridgeRing * strength * br), when); rg.gain.exponentialRampToValueAtTime(0.001, when + BRIDGE.ringDur);
+    rs.connect(rf); rf.connect(rg); rg.connect(master);
+    rs.start(when, Math.random() * 1.5, BRIDGE.ringDur + 0.02);
+  }
 }
 
 /* ---------- 単発の効果音 ---------- */

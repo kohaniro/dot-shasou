@@ -1,6 +1,6 @@
 // 指定シード・絵柄で、各バイオームの中心と遷移の途中の景色を PNG に保存する（ヘッドレス Chrome を CDP で操作。依存なし）
 // 使い方: node shots.mjs <outDir> <seed,seed> <style,style> [mode]
-//   mode: both（既定） | raw | view | run | perf | pano:<距離,距離> | zoom:<距離,距離> | station[:<k,k>] | door[:<k,k>] | journey[:<秒>] | pass | walk | swap[:<k,k>]
+//   mode: both（既定） | raw | view | run | perf | pano:<距離,距離> | at:<距離,距離> | zoom:<距離,距離> | station[:<k,k>] | door[:<k,k>] | journey[:<秒>] | pass | walk | swap[:<k,k>] | feat | tunnel[:<k,k>] | bridge[:<k,k>]
 // 時間と Math.random を差し替えて固定ステップで進めるので、同じ引数なら同じ絵になる。各ケースを2回描いて一致も確かめる。
 import fs from 'node:fs';
 import os from 'node:os';
@@ -60,7 +60,7 @@ const stub = (ls) => `(() => {
   localStorage.clear(); for (const k in ls) localStorage.setItem(k, ls[k]);
   window.__step = (n, ms) => { for (let i = 0; i < n; i++) { now += ms; const c = q.splice(0); for (const f of c) f(now); } return q.length; };
   window.__mods = async () => {
-    if (!window.__m) window.__m = { st: await import('/src/state.js'), w: await import('/src/world.js'), sc: await import('/src/scenery/index.js'), sky: await import('/src/scenery/sky.js'), j: await import('/src/journey.js'), sn: await import('/src/stations.js') };
+    if (!window.__m) window.__m = { st: await import('/src/state.js'), w: await import('/src/world.js'), sc: await import('/src/scenery/index.js'), sky: await import('/src/scenery/sky.js'), j: await import('/src/journey.js'), sn: await import('/src/stations.js'), ft: await import('/src/features.js') };
     return window.__m;
   };
   // 最初の1周について、各バイオームの中心と遷移の中間の距離を求める
@@ -77,7 +77,10 @@ const stub = (ls) => `(() => {
     runs.forEach((r, k) => { const n = runs[k + 1]; if (!n) return; const key = [r[0], n[0]].sort().join(); if (pairs.has(key)) return; pairs.add(key); out.push([r[0] + '>' + n[0], r[2]]); });
     return out;
   };
-  // 車内を重ねない景色だけの絵（空 + 各レイヤー）。幅 wd ドット、倍率 sc
+  // 車内を重ねない景色だけの絵（空 + 各レイヤー）。幅 wd ドット、倍率 sc。
+  // scenery/index.js の layers を並び順のまま全部重ねる（ホームの層 plat も含む。main.js の render() と違い、駅の近くかどうかは見ない。架線は描かない）。
+  // トンネル・橋の「架線より手前に重ねる層」も Layer として layers に足せば（render() の重ね順と同じ位置に）、ここは直さなくてもこの絵に入る。
+  // Layer でない描き方（render() の中で毎フレーム直接描く）にする場合は、下のループの後に同じ描画を足すこと
   window.__raw = async (dist, wd, sc) => {
     const { sc: S, sky, st } = await window.__mods();
     const c = document.createElement('canvas'); c.width = wd * sc; c.height = 80 * sc; const g = c.getContext('2d'); g.imageSmoothingEnabled = false; g.scale(sc, sc);
@@ -102,6 +105,35 @@ const stub = (ls) => `(() => {
     for (let i = 0; i < 4000 && !(S.phase !== 'stop' && S.dist >= s.pos + 300); i++) window.__step(1, 50);
     await shot('depart');
     return { s, views, raws, info };
+  };
+  // トンネル・橋の一覧（d = 0〜dMax）と、区間どうし・駅のホームとの最小間隔
+  window.__feat = async (dMax) => {
+    const { w, sn, ft } = await window.__mods(); const fs = ft.featuresIn(0, dMax), rows = [], cnt = {}, via = {};
+    let minGap = Infinity, minSt = Infinity;
+    fs.forEach((f, i) => {
+      const e = w.world((f.a + f.b) / 2), top = w.BIOME_KEYS.filter(k => e[k] > 0.005).sort((x, y) => e[y] - e[x]).slice(0, 2).map(k => k + ' ' + e[k].toFixed(2)).join(' / ');
+      let sd = Infinity, sk = 0; const n0 = sn.nextStation(f.a - 4000).k;
+      for (let k = Math.max(1, n0 - 1); k <= n0 + 2; k++) { const s = sn.stationAt(k), g = Math.max(0, s.x0 - f.b, f.a - s.x1); if (g < sd) { sd = g; sk = k; } }
+      if (i > 0) minGap = Math.min(minGap, f.a - fs[i - 1].b);
+      minSt = Math.min(minSt, sd); cnt[f.type] = (cnt[f.type] || 0) + 1; via[f.via] = (via[f.via] || 0) + 1;
+      rows.push([f.type, '#' + f.n, 'k' + cnt[f.type], 'a=' + f.a, 'b=' + f.b, 'len=' + f.len, f.via, '[' + top + ']', 'station k' + sk + ' ' + sd].join('  '));
+    });
+    // 参考: mount / sea が 0.5 をまたぐ地点（入口・出口のトンネルの中心になるはずの地点）
+    const cross = []; let pm = 0, ps = 0;
+    for (let d = 0; d <= dMax; d += 50) { const e = w.world(d); if (d > 0) { if ((pm < 0.5) !== (e.mount < 0.5)) cross.push('mount' + (e.mount > pm ? '+' : '-') + '@' + d); if ((ps < 0.5) !== (e.sea < 0.5)) cross.push('sea' + (e.sea > ps ? '+' : '-') + '@' + d); } pm = e.mount; ps = e.sea; }
+    return { rows, cnt, via, minGap, minSt, cross };
+  };
+  // トンネル・橋（type の k 番目）の4コマ: 入口が窓の右寄り（画面 x=250 に a）/ 入口が窓の中央 / 区間の中ほど / 出口が窓の中央
+  window.__feature = async (type, k) => {
+    const { st, ft } = await window.__mods(); const S = st.state, f = ft.featureNo(type, k), views = [], raws = [], info = [];
+    if (!f) return null;
+    const pts = [['enter-right', f.a - 250], ['enter-center', f.a - 160], ['middle', Math.round((f.a + f.b) / 2) - 160], ['exit-center', f.b - 160]];
+    for (const [tag, d] of pts) {
+      await window.__goto(d); views.push(window.__view()); raws.push(await window.__raw(S.dist, 480, 2));
+      const m = ft.featureMix(S.dist + 160);
+      info.push(tag + ' dist=' + S.dist.toFixed(1) + ' phase=' + S.phase + ' speed=' + S.speed.toFixed(1) + ' mix(tunnel=' + m.tunnel.toFixed(2) + ' bridge=' + m.bridge.toFixed(2) + ') prox=' + ft.tunnelProx(S.dist + 160, 600).toFixed(2));
+    }
+    return { f, views, raws, info };
   };
   // 固定ステップで secs 秒進め、進行を記録して検証する（描画もするが画像は保存しない）
   window.__journey = async (secs, dt) => {
@@ -250,6 +282,19 @@ for (const seed of seedArg.split(',')) for (const style of styleArg.split(',')) 
         h.push(save(`station-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.views)})`)));
         h.push(save(`station-raw-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.raws)})`)));
       }
+    } else if (mode === 'feat') { // トンネル・橋の一覧（画像なし）
+      const r = await pg.ev('__feat(260000)');
+      if (pass === 0) console.log(['', ...r.rows, `count: ${JSON.stringify(r.cnt)}  via: ${JSON.stringify(r.via)}  min gap between features: ${r.minGap}  min gap to platform: ${r.minSt}`, `crossings(0.5): ${r.cross.join(' ')}`].join('\n  ').slice(1));
+      h.push(crypto.createHash('sha256').update(r.rows.join(';')).digest('hex').slice(0, 12));
+    } else if (/^(tunnel|bridge)(:|$)/.test(mode)) { // トンネル・橋の k 番目ごとに4コマ
+      const [type, arg] = mode.split(':'), ks = arg ? arg.split(',').map(Number) : [1, 2];
+      for (const k of ks) {
+        const r = await pg.ev(`__feature('${type}', ${k})`);
+        if (!r) { if (pass === 0) console.log(`  ${type} ${k}: 見つからない`); continue; }
+        if (pass === 0) console.log([`  ${type} ${k}: #${r.f.n} a=${r.f.a} b=${r.f.b} len=${r.f.len} via=${r.f.via} h=${r.f.h}`, ...r.info].join('\n    '));
+        h.push(save(`${type}-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.views)})`)));
+        h.push(save(`${type}-raw-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.raws)})`)));
+      }
     } else if (mode === 'door' || mode.startsWith('door:')) { // 駅 k に停車して、ドアが開く途中の3コマ（開き始め / 半開き / ほぼ全開）
       const ks = mode.startsWith('door:') ? mode.slice(5).split(',').map(Number) : [1, 2];
       for (const k of ks) {
@@ -272,6 +317,9 @@ for (const seed of seedArg.split(',')) for (const style of styleArg.split(',')) 
       if (pass === 0) console.log('  ' + r.stations.join('\n  ') + '\n  events:\n    ' + r.ev.join('\n    ') + '\n  every 10s: ' + r.log.join(' | ') +
         `\n  maxAcc=${r.maxAcc} maxDec=${r.maxDec} maxAccJumpPerStep=${r.maxAccJumpPerStep} crawl(brake & v<3)=${r.crawlSecs}s`);
       h.push(r.ev.join(';'));
+    } else if (mode.startsWith('at:')) { // 指定した走行距離（state.dist。窓の中央は +160）の、車内込みの画面
+      const urls = []; for (const d of mode.slice(3).split(',')) { await pg.ev(`__goto(${d})`); urls.push(await pg.ev('__view()')); }
+      h.push(save(`at-${seed}-${style}.png`, await pg.ev(`__sheet(${JSON.stringify(urls)})`)));
     } else if (mode.startsWith('pano:')) { // 横に長い絵（チャンクの継ぎ目の確認）
       const urls = []; for (const d of mode.slice(5).split(',')) urls.push(await pg.ev(`__raw(${d}, 1280, 1)`));
       h.push(save(`pano-${seed}-${style}.png`, await pg.ev(`__sheet(${JSON.stringify(urls)})`)));

@@ -3,6 +3,7 @@ import { ri, pick, vnoise, rng, hash32 } from '../rng.js';
 import { R, mix, shade, tint, ink, GREENS, GRASS, WIN_D, HILL_BACK } from '../palette.js';
 import { world } from '../world.js';
 import { distAt } from '../layers.js';
+import { tunnelProx } from '../features.js';
 import { hz, torii } from './common.js';
 
 /* ---------- 海沿い: 水平線、海面、岬、防波堤と灯台、漁港、松林、漁村、浜、護岸 ---------- */
@@ -34,7 +35,9 @@ const DRY = { c: 9, cn: 0, sea: 0, d: 0 };
 export function coastAt(e, d) {
   if (!(e.sea > 0)) return DRY;
   const n = clamp01((0.7 * vnoise(d / 1700, 61) + 0.3 * vnoise(d / 560, 62) - 0.5) * 2.1 + 0.5);
-  const cn = 0.1 + 2.7 * Math.pow(n, 1.35); // 開けた側へ寄せる（岬は短く、海は長く）
+  let cn = 0.1 + 2.7 * Math.pow(n, 1.35); // 開けた側へ寄せる（岬は短く、海は長く）
+  const t = tunnelProx(d, 700); // トンネルの坑口の近くは岬にする（陸が張り出して海を隠す）。坑口から 700 より離れた地点の値は変えない
+  if (t > 0 && cn < 2.8) cn += (2.8 - cn) * t;
   return { c: 3.5 * (1 - e.sea) + e.sea * cn, cn, sea: e.sea, d };
 }
 const coast = (L, i, x) => { const d = distAt(L, i, x); return coastAt(world(d), d); };

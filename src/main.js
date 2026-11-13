@@ -1,12 +1,15 @@
 import { W, SY, SH, VY, VH, SUB, RAIL, state } from './state.js';
 import { STYLE, palCache, P, R } from './palette.js';
 import { sky, buildSky } from './scenery/sky.js';
-import { clouds, far, mid, near, track, plat, layers } from './scenery/index.js';
+import { clouds, far, mid, near, track, plat, truss, tunnel, layers } from './scenery/index.js';
+import { bridgeNear, poleOnBridge } from './scenery/bridge.js';
+import { tunnelNear, tunnelCovers, poleInTunnel, tunnelGlass } from './scenery/tunnel.js';
 import { drawDoorBackdrop } from './scenery/station.js';
 import { stationNear } from './stations.js';
 import { interior, drawInterior, drawStraps, drawDoors, doorShift, DOOR_W } from './interior.js';
 import { drawPassengers } from './passengers.js';
 import { ac, soundOn, click, driveAudio } from './audio.js';
+import { featureMix } from './features.js';
 import { stepJourney } from './journey.js';
 import { setSeed, seedFromHash, setPlaying, initUI } from './ui.js';
 import { initDebug } from './debug.js';
@@ -29,12 +32,13 @@ function jointPattern(j) {
 }
 function scheduleHits() {
   const { hits, dist, speed, t } = state;
+  let mix = null; // トンネル・橋の中か（席の位置で1回だけ引く）
   while (hits.length && hits[0][0] <= dist + speed * HIT_LOOK) {
     const [d, s, bob] = hits.shift();
     const dt = d > dist && speed > 0 ? (d - dist) / speed : 0;
     if (bob) state.bobs.push(t + dt);
     // 遅いほど小さく（停車寸前の継ぎ目はかすかに）
-    if (soundOn && ac && ac.state === 'running' && state.rate === 1) click(ac.currentTime + 0.02 + dt, s * (0.25 + 0.75 * Math.min(1, speed / 200)));
+    if (soundOn && ac && ac.state === 'running' && state.rate === 1) click(ac.currentTime + 0.02 + dt, s * (0.25 + 0.75 * Math.min(1, speed / 200)), mix || (mix = featureMix(dist + W / 2)));
   }
 }
 
@@ -68,6 +72,8 @@ function render() {
   for (const b of bobs) if (t >= b && t < b + 0.07) { bob = 1 / SUB; break; }
   const oy = SY + bob;
   cx.setTransform(SUB, 0, 0, SUB, 0, -VY * SUB);
+  const dark = tunnelCovers(dist); // 画面全体がトンネルの壁に隠れているあいだは、奥の景色を描かない
+  if (!dark) {
   cx.drawImage(sky, 0, SY);
   clouds.render(cx, dist * clouds.f + t * 1.2, oy);
   far.render(cx, dist * far.f, oy);
@@ -85,11 +91,17 @@ function render() {
   }
   for (let k = Math.floor(wx / SPAN); k * SPAN < wx + W + 20; k++) {
     const sx = k * SPAN - wx;
+    if (poleOnBridge(k * SPAN) || poleInTunnel(k * SPAN)) continue; // 橋の上・トンネルの山の中には柱を立てない
     R(cx, sx, SY, 4, SH + 2, '#4b5350'); R(cx, sx, SY, 1, SH + 2, '#75807c');
     R(cx, sx - 12, SY + 3, 30, 2, '#4b5350');
   }
+  }
   // 駅のホーム（架線より手前）。駅の近くでだけ描く
   if (stationNear(dist + W / 2, 160)) plat.render(cx, dist * plat.f, oy);
+  // トラス橋の鉄骨（架線より手前）。橋の近くでだけ描く
+  if (bridgeNear(dist + W / 2)) truss.render(cx, dist * truss.f, oy);
+  // トンネルの壁と坑門（架線より手前）。トンネルの近くでだけ描く
+  if (dark || tunnelNear(dist + W / 2)) tunnel.render(cx, dist * tunnel.f, oy);
   // ガラスの映り込み
   if (STYLE.glass) {
     cx.globalAlpha = 0.08; cx.fillStyle = '#ffffff';
@@ -99,6 +111,7 @@ function render() {
       cx.fillRect(196 + s, y, 9, 1); cx.fillRect(212 + s, y, 3, 1);
     }
     cx.globalAlpha = 1;
+    tunnelGlass(cx, dist); // トンネルの中: 暗い窓に車内がうっすら映る
   }
   // ドア: 開いた分だけ、景色の層の上下にホームの続きを描き足してから扉を重ねる
   const dsh = state.phase === 'stop' ? doorShift(state.door) : 0;
