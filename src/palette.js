@@ -58,3 +58,11 @@ export const GRASS = ['#7c9b55', '#6c9150'];          // 草地
 export const HILL_BACK = '#7f9fb0', HILL_FRONT = '#4f8a6a'; // 遠くの山並み、手前の丘
 export const VINYL = '#e9eef0', VINYL_RIB = '#b9c7c6'; // ビニールハウス
 export const TORII = '#c94f3f';
+/* 山間の色 */
+export const CEDAR = ['#2f5a44', '#386349', '#28503f'];  // 杉・ヒノキ（青みのある濃い緑）
+export const BROAD = ['#5f8f4a', '#74a052', '#4f7f45'];  // 広葉樹
+export const BAMBOO = ['#9dbb5c', '#86a94f', '#b3c96c']; // 竹
+export const MEADOW = ['#7fa353', '#739a50'];            // 山あいの草地
+export const MOUNT_FAR = '#3f7358';                      // 遠景の手前の尾根
+export const ROCK = '#8d8c84', CONC = '#b5b4aa', EARTH = '#9a7f62'; // 岩・石積み、コンクリート、土
+export const STREAM = '#6fb0cc', FOAM = '#e8f3f4', GRAVEL = '#c9c7b6'; // 渓流、白波、河原

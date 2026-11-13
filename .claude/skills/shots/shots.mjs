@@ -66,12 +66,15 @@ const stub = (ls) => `(() => {
   // 最初の1周について、各バイオームの中心と遷移の中間の距離を求める
   window.__plan = async () => {
     const { w } = await window.__mods(); const runs = []; let cur = null, st = 0;
-    for (let d = 0; d < 400000 && runs.length < 5; d += 20) {
+    const seen = () => new Set(runs.map(r => r[0]));
+    for (let d = 0; d < 800000 && !(seen().has('mount') && seen().has('sea')); d += 20) { // 区間は終わったときに積むので、山間と海沿いを両方抜けるまで
       const e = w.world(d), b = w.BIOME_KEYS.reduce((a, k) => e[k] > e[a] ? k : a, 'city');
       if (b !== cur) { if (cur) runs.push([cur, st, d]); cur = b; st = d; }
     }
-    const out = [];
-    runs.slice(0, 4).forEach((r, k) => { out.push([r[0], k === 0 ? Math.round(r[2] * 0.3) : Math.round((r[1] + r[2]) / 2)]); if (k < 3) out.push([r[0] + '>' + runs[k + 1][0], r[2]]); });
+    // 先に各バイオームの中心（最初に現れた区間）、続けて遷移（隣り合う組ごとに最初の1回）
+    const out = [], pairs = new Set();
+    for (const b of w.BIOME_KEYS) { const k = runs.findIndex(r => r[0] === b); if (k >= 0) out.push([b, k === 0 ? Math.round(runs[0][2] * 0.3) : Math.round((runs[k][1] + runs[k][2]) / 2)]); }
+    runs.forEach((r, k) => { const n = runs[k + 1]; if (!n) return; const key = [r[0], n[0]].sort().join(); if (pairs.has(key)) return; pairs.add(key); out.push([r[0] + '>' + n[0], r[2]]); });
     return out;
   };
   // 車内を重ねない景色だけの絵（空 + 各レイヤー）。幅 wd ドット、倍率 sc
@@ -278,12 +281,14 @@ for (const seed of seedArg.split(',')) for (const style of styleArg.split(',')) 
     } else {
     if (mode !== 'view') {
       const urls = []; for (const [, d] of plan) urls.push(await pg.ev(`__raw(${d}, 480, 2)`));
-      const A = await pg.ev(`__sheet(${JSON.stringify(urls.slice(0, 4))})`), B = await pg.ev(`__sheet(${JSON.stringify(urls.slice(4))})`);
+      const nc = plan.filter(p => !p[0].includes('>')).length;
+      const A = await pg.ev(`__sheet(${JSON.stringify(urls.slice(0, nc))})`), B = await pg.ev(`__sheet(${JSON.stringify(urls.slice(nc))})`);
       h.push(save(`raw-${seed}-${style}-a.png`, A), save(`raw-${seed}-${style}-b.png`, B));
     }
     if (mode !== 'raw') {
       const urls = []; for (const [, d] of plan) { await pg.ev(`__goto(${d})`); urls.push(await pg.ev('__view()')); }
-      const A = await pg.ev(`__sheet(${JSON.stringify(urls.slice(0, 4))})`), B = await pg.ev(`__sheet(${JSON.stringify(urls.slice(4))})`);
+      const nc = plan.filter(p => !p[0].includes('>')).length;
+      const A = await pg.ev(`__sheet(${JSON.stringify(urls.slice(0, nc))})`), B = await pg.ev(`__sheet(${JSON.stringify(urls.slice(nc))})`);
       h.push(save(`view-${seed}-${style}-a.png`, A), save(`view-${seed}-${style}-b.png`, B));
     }
     }

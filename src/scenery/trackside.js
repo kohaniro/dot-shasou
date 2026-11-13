@@ -3,6 +3,8 @@ import { ri, pick } from '../rng.js';
 import { P, R, shade, tint, GREENS, GRASS, PATH } from '../palette.js';
 import { pickKind } from '../world.js';
 import { env } from '../layers.js';
+import { seaTrack } from './sea.js';
+import { mountSeg } from './mountain.js';
 
 /* ---------- trackside: 線路際の地面。都心は壁・フェンス、住宅街は生垣、郊外・田園は草地・柵・用水路・あぜ道 ---------- */
 function wall(g, r, x, len) {
@@ -65,14 +67,19 @@ const SEG_RATE = {
   city:   { wall: 0.55, fence: 0.35, hedge: 0.10, grass: 0, stakes: 0, channel: 0, path: 0 },
   resi:   { wall: 0.25, fence: 0.30, hedge: 0.45, grass: 0, stakes: 0, channel: 0, path: 0 },
   suburb: { wall: 0.00, fence: 0.12, hedge: 0.15, grass: 0.38, stakes: 0.22, channel: 0.08, path: 0.05 },
-  rural:  { wall: 0.00, fence: 0.00, hedge: 0.00, grass: 0.40, stakes: 0.20, channel: 0.20, path: 0.20 }
+  rural:  { wall: 0.00, fence: 0.00, hedge: 0.00, grass: 0.40, stakes: 0.20, channel: 0.20, path: 0.20 },
+  mount:  { wall: 0.00, fence: 0.00, hedge: 0.00, grass: 0.70, stakes: 0.30, channel: 0, path: 0 },
+  sea:    { wall: 0.00, fence: 0.00, hedge: 0.00, grass: 0.70, stakes: 0.30, channel: 0, path: 0 }
 };
 export function drawTrackside(g, i, r, L) {
   const cw = L.cw;
   let x = 0;
   while (x < cw) {
     let len = ri(r, 24, 90); if (cw - x - len < 12) len = cw - x;
-    SEG[pickKind(env(L, i, x + (len >> 1)), r, SEG_RATE)](g, r, x, len);
+    const e = env(L, i, x + (len >> 1));
+    if (e.sea > 0 && seaTrack(g, r, x, len, e, L, i)) { x += len; continue; } // 海沿い: 護岸・砂地・道路
+    if (e.mount > 0 && r() < e.mount) { mountSeg(g, r, x, len, L, i); x += len; continue; } // 山間: 擁壁・法枠・草の斜面・沢
+    SEG[pickKind(e, r, SEG_RATE)](g, r, x, len);
     x += len;
   }
 }
