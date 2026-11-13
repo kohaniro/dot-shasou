@@ -1,6 +1,6 @@
 // 指定シード・絵柄で、各バイオームの中心と遷移の途中の景色を PNG に保存する（ヘッドレス Chrome を CDP で操作。依存なし）
 // 使い方: node shots.mjs <outDir> <seed,seed> <style,style> [mode]
-//   mode: both（既定） | raw | view | run | perf | pano:<距離,距離> | zoom:<距離,距離> | station[:<k,k>] | door[:<k,k>] | journey[:<秒>]
+//   mode: both（既定） | raw | view | run | perf | pano:<距離,距離> | zoom:<距離,距離> | station[:<k,k>] | door[:<k,k>] | journey[:<秒>] | pass | walk | swap[:<k,k>]
 // 時間と Math.random を差し替えて固定ステップで進めるので、同じ引数なら同じ絵になる。各ケースを2回描いて一致も確かめる。
 import fs from 'node:fs';
 import os from 'node:os';
@@ -125,6 +125,49 @@ const stub = (ls) => `(() => {
       stations: [1, 2, 3, 4].map(k => { const s = sn.stationAt(k); return k + ':' + s.name + '(' + s.kana + ') pos=' + s.pos + ' size=' + s.size.toFixed(2) + ' len=' + s.len + ' x0=' + s.x0 + ' x1=' + s.x1; }) };
   };
   window.__view = () => document.getElementById('view').toDataURL('image/png');
+  // 画面のうち座席まわり（内部座標 y=76〜150、幅320）を3倍に拡大した絵
+  window.__seat = () => {
+    const v = document.getElementById('view'), k = v.width / 320, c = document.createElement('canvas'); c.width = 960; c.height = 74 * 3;
+    const g = c.getContext('2d'); g.imageSmoothingEnabled = false; g.drawImage(v, 0, (76 - 20) * k, 320 * k, 74 * k, 0, 0, c.width, c.height);
+    return c.toDataURL('image/png');
+  };
+  // 歩く立ち姿の確認: いまの画面を3倍にした上に、7人（大人・子ども・高齢者を含む）を歩幅の違う瞬間で並べる
+  window.__walk = async (seed, dir, t0) => {
+    const ps = await import('/src/passengers.js'), rn = await import('/src/rng.js');
+    const v = document.getElementById('view'), c = document.createElement('canvas'); c.width = 960; c.height = 390;
+    const g = c.getContext('2d'); g.imageSmoothingEnabled = false; g.drawImage(v, 0, 0, c.width, c.height); g.setTransform(3, 0, 0, 3, 0, -60);
+    const people = []; let s = 1;
+    for (const kind of ['adult', 'adult', 'child', 'adult', 'elder', 'adult', 'adult']) for (; ; s++) { const p = ps.makePerson(rn.rng(rn.hash32(seed, 5, s))); if (p.kind === kind) { people.push(p); s++; break; } }
+    people.forEach((p, i) => ps.drawWalker(g, p, 34 + i * 42, t0 + i * 0.17, dir));
+    return c.toDataURL('image/png');
+  };
+  // 駅 k での乗客の入れ替え6コマ: 降りる人が立った直後 / 歩いている途中 / 乗る人が入ってきたところ / 歩いている途中 / 全員が座ったあと（ドアが閉まる前）/ 発車後
+  window.__swap = async (k) => {
+    const { st, sn } = await window.__mods(); const ps = await import('/src/passengers.js'), S = st.state;
+    const s = sn.stationAt(k), sw = ps.swapAt(k), tl = sw.tl, offs = sw.moves.filter(m => m.off), ons = sw.moves.filter(m => !m.off);
+    const mn = (a, f, d) => a.length ? Math.min(...a.map(f)) : d, mx = (a, f, d) => a.length ? Math.max(...a.map(f)) : d;
+    const o0 = mn(offs, m => m.start, tl.open + 0.6), o1 = mx(offs, m => m.end, o0 + 3), b0 = mn(ons, m => m.start, tl.opened), b1 = mx(ons, m => m.end, b0 + 3);
+    const ts = [o0 + 0.1, (o0 + o1) / 2, b0 + 0.8, (b0 + b1) / 2, tl.close - 0.15], views = [], info = [];
+    const tags = ['stood', 'off-walk', 'on-enter', 'on-walk', 'seated', 'departed'];
+    const shot = i => { views.push(window.__view()); info.push(tags[i] + ' stopT=' + S.stopT.toFixed(2) + ' phase=' + S.phase + ' seated=[' + ps.passengers.map(p => p.seat).join(',') + ']'); };
+    for (let i = 0; i < ts.length; i++) { await window.__goto(s.pos, ts[i]); shot(i); }
+    await window.__goto(s.pos + 300); shot(5);
+    return { s, views, info, off: sw.off, on: sw.on, gap: sw.gap, m: sw.m, forced: sw.forced, close: +tl.close.toFixed(2), last: +b1.toFixed(2) };
+  };
+  // 入れ替えの検証: 区間 n の顔ぶれを直接求めた場合と 0 から順に求めた場合の一致、駅 1〜kMax の予定（最後に座る時刻 < tl.close か）
+  window.__swapCheck = async (n, kMax) => {
+    const { sn } = await window.__mods(); const ps = await import('/src/passengers.js');
+    const sig = ros => ros.map(p => p ? [p.kind, p.top, p.bottom, p.pose, p.phase.toFixed(4), p.seat].join('/') : '-').join('|');
+    ps.genPassengers(); const direct = sig(ps.rosterAt(n));
+    ps.genPassengers(); let seq = ''; for (let i = 0; i <= n; i++) seq = sig(ps.rosterAt(i));
+    const rows = []; let worst = Infinity, minDwell = null;
+    for (let k = 1; k <= kMax; k++) {
+      const s = sn.stationAt(k), sw = ps.swapAt(k), last = Math.max(0, ...sw.moves.map(m => m.end)), margin = sw.tl.close - last;
+      worst = Math.min(worst, margin); if (!minDwell || s.dwell < minDwell.dwell) minDwell = { k, dwell: s.dwell };
+      rows.push('k' + k + ' dwell=' + s.dwell.toFixed(2) + ' close=' + sw.tl.close.toFixed(2) + ' last=' + last.toFixed(2) + ' margin=' + margin.toFixed(2) + ' gap=' + sw.gap + ' x' + sw.m.toFixed(1) + (sw.forced ? ' FORCED' : '') + ' off=[' + sw.off + '] on=[' + sw.on + '] n=' + ps.rosterAt(k).filter(Boolean).length);
+    }
+    return { same: direct === seq, rows, worst: +worst.toFixed(2), minDwell: 'k' + minDwell.k + ' (' + minDwell.dwell.toFixed(2) + ')' };
+  };
   // 複数の dataURL を縦に並べ、ラベル用の余白なしで1枚にする
   window.__sheet = async (urls) => {
     const ims = await Promise.all(urls.map(u => new Promise(r => { const im = new Image(); im.onload = () => r(im); im.src = u; })));
@@ -135,9 +178,9 @@ const stub = (ls) => `(() => {
   };
 })();`;
 
-async function load(seed, style) {
+async function load(seed, style, passMode = 'on') {
   const pg = await openPage();
-  await pg.send('Page.addScriptToEvaluateOnNewDocument', { source: stub({ 'shasou-style': style, 'shasou-pass': '1' }) });
+  await pg.send('Page.addScriptToEvaluateOnNewDocument', { source: stub({ 'shasou-style': style, 'shasou-pass': passMode }) });
   await pg.send('Page.navigate', { url: `${BASE}/index.html#line-${seed}` });
   for (let i = 0; i < 100 && !pg.events.includes('Page.loadEventFired'); i++) await sleep(50);
   await sleep(300);
@@ -146,6 +189,42 @@ async function load(seed, style) {
 const save = (name, url) => { const b = Buffer.from(url.split(',')[1], 'base64'); fs.writeFileSync(path.join(OUT, name), b); return crypto.createHash('sha256').update(b).digest('hex').slice(0, 12); };
 
 const allErrors = []; let randCalls = 0;
+if (mode === 'pass') { // 乗客の確認: 絵柄ごとに、シードごとの座席まわり（あり）＋最初のシードのシルエットを縦に並べる
+  const seeds = seedArg.split(',');
+  for (const style of styleArg.split(',')) {
+    const hashes = [];
+    for (let pass = 0; pass < 2; pass++) {
+      const urls = [];
+      for (const [seed, pm] of [...seeds.map(s => [s, 'on']), [seeds[0], 'sil']]) {
+        const pg = await load(seed, style, pm);
+        await pg.ev('__goto(0)'); urls.push(await pg.ev('__seat()'));
+        if (pm === 'sil') hashes.push(save(`pass-${style}.png`, await pg.ev(`__sheet(${JSON.stringify(urls)})`)));
+        randCalls = Math.max(randCalls, await pg.ev('window.__randCalls || 0'));
+        allErrors.push(...pg.errors.filter(e => !e.includes('favicon.ico')).map(e => `${seed}/${style}/${pm}: ${e}`));
+        await pg.close();
+      }
+    }
+    console.log(`pass ${style}: seeds ${seeds.join(',')} (on) + ${seeds[0]} (sil)
+  deterministic: ${hashes[0] === hashes[1] ? 'YES' : 'NO'}  ${hashes[0]}`);
+  }
+} else if (mode === 'walk') { // 歩く立ち姿の確認: 右向き / 左向き / シルエット の3コマ
+  for (const seed of seedArg.split(',')) for (const style of styleArg.split(',')) {
+    const hashes = [];
+    for (let pass = 0; pass < 2; pass++) {
+      const urls = [];
+      for (const [pm, dir, t0] of [['on', 1, 0], ['on', -1, 0.4], ['sil', 1, 0]]) {
+        const pg = await load(seed, style, pm);
+        await pg.ev('__goto(0)'); urls.push(await pg.ev(`__walk(${Number(seed)}, ${dir}, ${t0})`));
+        if (pm === 'sil') hashes.push(save(`walk-${seed}-${style}.png`, await pg.ev(`__sheet(${JSON.stringify(urls)})`)));
+        randCalls = Math.max(randCalls, await pg.ev('window.__randCalls || 0'));
+        allErrors.push(...pg.errors.filter(e => !e.includes('favicon.ico')).map(e => `${seed}/${style}/${pm}: ${e}`));
+        await pg.close();
+      }
+    }
+    console.log(`walk ${seed} ${style}
+  deterministic: ${hashes[0] === hashes[1] ? 'YES' : 'NO'}  ${hashes[0]}`);
+  }
+} else
 for (const seed of seedArg.split(',')) for (const style of styleArg.split(',')) {
   const hashes = [];
   for (let pass = 0; pass < 2; pass++) { // 2回読み込んで同じ絵になるか（決定性）
@@ -173,6 +252,16 @@ for (const seed of seedArg.split(',')) for (const style of styleArg.split(',')) 
       for (const k of ks) {
         const urls = []; for (const t of [1.5, 2.0, 2.6]) { await pg.ev(`(async () => __goto((await __mods()).sn.stationAt(${k}).pos, ${t}))()`); urls.push(await pg.ev('__view()')); }
         h.push(save(`door-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(urls)})`)));
+      }
+    } else if (mode === 'swap' || mode.startsWith('swap:')) { // 駅 k での乗客の入れ替え6コマ
+      const ks = mode.startsWith('swap:') ? mode.slice(5).split(',').map(Number) : [1, 2];
+      const c = await pg.ev('__swapCheck(3, 12)');
+      if (pass === 0) console.log(`  roster(3) direct === sequential: ${c.same ? 'YES' : 'NO'}  min dwell: ${c.minDwell}  worst margin to tl.close (k1-12): ${c.worst}s\n    ` + c.rows.join('\n    '));
+      h.push(crypto.createHash('sha256').update(c.same + c.rows.join(';')).digest('hex').slice(0, 12));
+      for (const k of ks) {
+        const r = await pg.ev(`__swap(${k})`);
+        if (pass === 0) console.log(`  swap ${k}: ${r.s.name} dwell=${r.s.dwell.toFixed(2)} off=[${r.off}] on=[${r.on}] gap=${r.gap} speed x${r.m.toFixed(1)}${r.forced ? ' FORCED' : ''} lastSeated=${r.last} close=${r.close}\n    ` + r.info.join('\n    '));
+        h.push(save(`swap-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.views)})`)), crypto.createHash('sha256').update(r.info.join(';')).digest('hex').slice(0, 6));
       }
     } else if (mode === 'journey' || mode.startsWith('journey:')) { // 進行のログと検証（画像なし）
       const secs = mode.startsWith('journey:') ? Number(mode.slice(8)) : 420;

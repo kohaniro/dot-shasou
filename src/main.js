@@ -5,7 +5,7 @@ import { clouds, far, mid, near, track, plat, layers } from './scenery/index.js'
 import { drawDoorBackdrop } from './scenery/station.js';
 import { stationNear } from './stations.js';
 import { interior, drawInterior, drawStraps, drawDoors, doorShift, DOOR_W } from './interior.js';
-import { passengers, drawPerson } from './passengers.js';
+import { drawPassengers } from './passengers.js';
 import { ac, soundOn, click, driveAudio } from './audio.js';
 import { stepJourney } from './journey.js';
 import { setSeed, seedFromHash, setPlaying, initUI } from './ui.js';
@@ -104,7 +104,7 @@ function render() {
   if (dsh > 0) { drawDoorBackdrop(cx, state.station, 0, dsh); drawDoorBackdrop(cx, state.station, W - dsh, dsh); }
   drawDoors(cx, dsh / DOOR_W);
   cx.drawImage(interior, 0, 0);
-  if (state.showPass) for (const p of passengers) drawPerson(cx, p, t);
+  drawPassengers(cx, t);
   drawStraps(cx, t, bob ? 0.5 : 0);
 }
 function frame(now) {

@@ -25,7 +25,7 @@ function newLine() {
 const stage = document.getElementById('stage');
 const btnSound = document.getElementById('btn-sound'), btnPause = document.getElementById('btn-pause');
 const btnLine = document.getElementById('btn-line'), btnFull = document.getElementById('btn-full'), vol = document.getElementById('vol');
-const styleSel = document.getElementById('style'), btnPass = document.getElementById('btn-pass');
+const styleSel = document.getElementById('style'), passSel = document.getElementById('pass');
 const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 export function setPlaying(p) {
   state.playing = p; state.last = performance.now();
@@ -60,11 +60,9 @@ export function initUI(render, rebuild) {
     store.set('shasou-style', styleSel.value);
     if (!state.playing) render();
   });
-  btnPass.addEventListener('click', () => {
-    state.showPass = !state.showPass;
-    btnPass.setAttribute('aria-pressed', String(state.showPass));
-    btnPass.textContent = state.showPass ? '乗客あり' : '乗客なし';
-    store.set('shasou-pass', state.showPass ? '1' : '0');
+  passSel.addEventListener('change', () => {
+    state.passMode = passSel.value;
+    store.set('shasou-pass', passSel.value);
     if (!state.playing) render();
   });
   document.addEventListener('visibilitychange', () => { state.last = performance.now(); syncAudio(); });
@@ -72,5 +70,8 @@ export function initUI(render, rebuild) {
 
   /* 保存された設定の復元 */
   { const s0 = store.get('shasou-style'); if (s0 && STYLES[s0]) { setStyle(s0); styleSel.value = s0; } }
-  if (store.get('shasou-pass') === '0') { state.showPass = false; btnPass.setAttribute('aria-pressed', 'false'); btnPass.textContent = '乗客なし'; }
+  { // 乗客の表示。古い保存値 '1' / '0' は 'on' / 'off' として読む
+    const p0 = store.get('shasou-pass'), m = p0 === '1' ? 'on' : p0 === '0' ? 'off' : p0;
+    if (m === 'on' || m === 'sil' || m === 'off') { state.passMode = m; passSel.value = m; }
+  }
 }
