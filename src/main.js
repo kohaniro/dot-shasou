@@ -89,10 +89,11 @@ function frame(now) {
 /* ---------- sizing: ドットが均一になるよう、端末ピクセルの整数倍で表示する ---------- */
 const stage = document.getElementById('stage');
 function fit() {
-  const dpr = window.devicePixelRatio || 1, aw = stage.clientWidth, ah = stage.clientHeight, bw = W * SUB, bh = VH * SUB;
-  let s = Math.floor(Math.min(aw / bw, ah / bh) * dpr) / dpr;
-  if (!(s * dpr >= 1)) s = Math.max(0.1, Math.min(aw / bw, ah / bh));
-  cv.style.width = (bw * s) + 'px'; cv.style.height = (bh * s) + 'px';
+  // 1ドット(= キャンバスの SUB ピクセル)が端末ピクセルの整数倍になる最大の倍率
+  const dpr = window.devicePixelRatio || 1, aw = stage.clientWidth, ah = stage.clientHeight;
+  let s = Math.floor(Math.min(aw / W, ah / VH) * dpr) / dpr;
+  if (!(s * dpr >= 1)) s = Math.max(0.1, Math.min(aw / W, ah / VH));
+  cv.style.width = (W * s) + 'px'; cv.style.height = (VH * s) + 'px';
 }
 window.addEventListener('resize', fit);
 if (window.ResizeObserver) new ResizeObserver(fit).observe(stage);

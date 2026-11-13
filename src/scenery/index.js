@@ -1,6 +1,6 @@
 import { Layer } from '../layers.js';
 import { drawClouds } from './sky.js';
-import { drawFar, drawMid, drawNear } from './city.js';
+import { drawFar, drawMid, drawNear } from './landscape.js';
 import { drawTrackside } from './trackside.js';
 
 export const clouds = new Layer(1, 0.012, 320, drawClouds);

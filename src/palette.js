@@ -49,3 +49,12 @@ export const HOUSE_WALL = ['#e6e0d2', '#d6cfc0', '#c9c4bc', '#b8a58f', '#ded6c4'
 export const ROOF = ['#4a5560', '#5b4d47', '#3f4a5a', '#7a4f3f', '#56605a', '#6b6f73'];
 export const WIN_D = '#3d4f63', WIN_M = '#5b7389', WIN_L = '#8fb1c9';
 export const GREENS = ['#4f7a45', '#5f8c4f', '#3f6a3d'];
+/* 田園・郊外の色: ゲーム風16色・モノクロ4色に変換されても 水面 / 稲 / あぜ が別の色になる明るさ・色相で選んである */
+export const WATER = '#a5dcee';                       // 水を張った田（空の映り込み）
+export const RICE = ['#7fae4f', '#93b85a'];           // 稲
+export const AZE = '#5f7a45';                         // あぜ
+export const SOIL = '#a8946c', PATH = '#c2b48c';      // 畑の土、あぜ道
+export const GRASS = ['#7c9b55', '#6c9150'];          // 草地
+export const HILL_BACK = '#7f9fb0', HILL_FRONT = '#4f8a6a'; // 遠くの山並み、手前の丘
+export const VINYL = '#e9eef0', VINYL_RIB = '#b9c7c6'; // ビニールハウス
+export const TORII = '#c94f3f';
