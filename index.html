@@ -27,6 +27,7 @@ body{
 .top h1{margin:0;font-size:18px;font-weight:400;letter-spacing:.12em}
 .led{color:var(--amber);font-variant-numeric:tabular-nums;letter-spacing:.06em}
 .led .sep{color:var(--muted);margin-inline:.5em}
+.led .next{color:var(--muted)}
 #stage{flex:1;min-height:0;min-width:0;display:flex;align-items:center;justify-content:center;background:var(--bg)}
 #stage:fullscreen{background:#000}
 #view{display:block;image-rendering:crisp-edges;image-rendering:pixelated;background:#000;max-width:100%}
@@ -50,7 +51,7 @@ body{
 
 <div class="top">
   <h1>ドット車窓</h1>
-  <div class="led" aria-live="off"><span id="line-label">路線 ----</span><span class="sep">/</span><span id="speed-label">-- km/h</span></div>
+  <div class="led" aria-live="off"><span id="line-label">路線 ----</span><span class="sep">/</span><span id="speed-label">-- km/h</span><span class="sep">/</span><span id="next-label" class="next"></span></div>
 </div>
 
 <div id="stage"><canvas id="view" width="640" height="260" aria-label="電車の車内から向かいの窓越しに流れる街の景色"></canvas></div>

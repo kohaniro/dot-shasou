@@ -5,6 +5,18 @@ import { P, R, shade, tint } from './palette.js';
 /* ---------- interior (pre-rendered, windows punched out) ---------- */
 export const interior = document.createElement('canvas');
 interior.width = W; interior.height = 180;
+/* 扉（左右の端に1枚ずつ見えている）。車内の絵とは別に持ち、開き具合に合わせて戸袋（座席側の壁の裏）へずらして描く */
+const DOORS = [[0, 1], [286, -1]];
+const leaves = DOORS.map(() => { const c = document.createElement('canvas'); c.width = 34; c.height = 180; return c; });
+/* open: 0（閉）〜1（全開）。車内（interior）を重ねる前に呼ぶ。戸袋に入った分は描かない（開口 x 0〜32 / 287〜319 の中だけ） */
+export const DOOR_W = 33;
+export const doorShift = open => Math.round(DOOR_W * Math.min(1, Math.max(0, open)));
+export function drawDoors(g, open) {
+  const sh = doorShift(open), w = DOOR_W - sh;
+  if (w <= 0) return;
+  g.drawImage(leaves[0], 0, 0, w, 180, sh, 0, w, 180);
+  g.drawImage(leaves[1], 1 + sh, 0, w, 180, 287, 0, w, 180);
+}
 export function drawInterior() {
   const g = interior.getContext('2d'), r = rng(20261113);
   const S = (x, y, w, h, c) => R(g, x, y, w, h, c);   // 面
@@ -50,15 +62,21 @@ export function drawInterior() {
   for (let x = 50; x < 270; x += 4) { S(x, 151, 2, 1, '#5d6266'); S(x, 153, 2, 1, '#5d6266'); }
   // floor
   S(0, 157, 320, 23, '#7b756b'); S(0, 157, 320, 1, '#4f4b45');
-  // doors (left / right edges)
-  [[0, 1], [286, -1]].forEach(([dx0, dir]) => {
+  // doors (left / right edges): 枠・鴨居・床の縁だけをここに描き、扉そのものは leaf に描いて毎フレーム重ねる（drawDoors）
+  DOORS.forEach(([dx0, dir], k) => {
     S(dx0, 7, 34, 150, '#b7bcbe'); S(dx0, 7, 34, 7, '#2a2d31');
     for (let k = 0; k < 7; k++) if (k !== 3) S(dx0 + 6 + k * 3, 10, 2, 1, '#f2b84b');
-    S(dx0 + 6, 30, 22, 66, '#26282a');
-    S(dx0, 14, 34, 1, '#8d9396'); HL(dx0 + 2, 100, 30, '#9aa0a3'); S(dx0, 150, 34, 7, '#9aa0a3');
-    S(dir > 0 ? dx0 : dx0 + 32, 14, 2, 143, '#d9b53f');
+    S(dx0, 14, 34, 1, '#8d9396');
     S(dir > 0 ? dx0 + 33 : dx0, 7, 1, 150, frD);
     S(dx0, 157, 34, 2, '#a7acae'); S(dx0, 159, 34, 2, '#d0ae3c');
+    // 扉（閉じた位置で描く。窓は抜く）
+    const lf = leaves[k], lg = lf.getContext('2d'), LS = (x, y, w, h, c) => R(lg, x - dx0, y, w, h, c);
+    lg.clearRect(0, 0, lf.width, lf.height);
+    LS(dx0, 15, 34, 142, '#b7bcbe');
+    LS(dx0 + 6, 30, 22, 66, '#26282a');
+    R(lg, 2, 100, 30, 1, '#9aa0a3'); LS(dx0, 150, 34, 7, '#9aa0a3');
+    LS(dir > 0 ? dx0 : dx0 + 32, 15, 2, 142, '#d9b53f');
+    lg.clearRect(8, 32, 18, 62);
   });
   S(34, 7, 10, 150, wall); S(276, 7, 10, 150, wall);
   // sleeve partitions + stanchions
@@ -67,7 +85,7 @@ export function drawInterior() {
   [111, 207].forEach(px => { S(px, 23, 1, 125, '#dfe3e5'); S(px + 1, 23, 1, 125, '#8d9396'); });
   S(44, 7, 232, 1, '#8d9396'); // strap rail
   // window openings
-  [[50, 28, 108, 76], [162, 28, 108, 76], [8, 32, 18, 62], [294, 32, 18, 62]].forEach(([x, y, w, h]) => {
+  [[50, 28, 108, 76], [162, 28, 108, 76], [0, 15, 33, 142], [287, 15, 33, 142]].forEach(([x, y, w, h]) => {
     g.clearRect(x, y, w, h);
   });
   // the mid stanchions pass in front of the glass

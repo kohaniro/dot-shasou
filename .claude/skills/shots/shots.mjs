@@ -1,6 +1,6 @@
 // 指定シード・絵柄で、各バイオームの中心と遷移の途中の景色を PNG に保存する（ヘッドレス Chrome を CDP で操作。依存なし）
 // 使い方: node shots.mjs <outDir> <seed,seed> <style,style> [mode]
-//   mode: both（既定） | raw | view | run | perf | pano:<距離,距離> | zoom:<距離,距離>
+//   mode: both（既定） | raw | view | run | perf | pano:<距離,距離> | zoom:<距離,距離> | station[:<k,k>] | door[:<k,k>] | journey[:<秒>]
 // 時間と Math.random を差し替えて固定ステップで進めるので、同じ引数なら同じ絵になる。各ケースを2回描いて一致も確かめる。
 import fs from 'node:fs';
 import os from 'node:os';
@@ -60,7 +60,7 @@ const stub = (ls) => `(() => {
   localStorage.clear(); for (const k in ls) localStorage.setItem(k, ls[k]);
   window.__step = (n, ms) => { for (let i = 0; i < n; i++) { now += ms; const c = q.splice(0); for (const f of c) f(now); } return q.length; };
   window.__mods = async () => {
-    if (!window.__m) window.__m = { st: await import('/src/state.js'), w: await import('/src/world.js'), sc: await import('/src/scenery/index.js'), sky: await import('/src/scenery/sky.js') };
+    if (!window.__m) window.__m = { st: await import('/src/state.js'), w: await import('/src/world.js'), sc: await import('/src/scenery/index.js'), sky: await import('/src/scenery/sky.js'), j: await import('/src/journey.js'), sn: await import('/src/stations.js') };
     return window.__m;
   };
   // 最初の1周について、各バイオームの中心と遷移の中間の距離を求める
@@ -85,7 +85,45 @@ const stub = (ls) => `(() => {
     }
     return c.toDataURL('image/png');
   };
-  window.__goto = async (dist) => { const { st } = await window.__mods(); st.state.dist = dist; st.state.nextJoint = dist + 100000; st.state.bobs.length = 0; window.__step(2, 16); return st.state.dist; };
+  // 任意の距離へ飛ぶ。進行の状態（phase / station / door）も、その地点に合わせて置き直す。
+  // stopT を渡すと、駅の pos ちょうどのとき停車してからその秒数の状態にする
+  window.__goto = async (dist, stopT = 0) => { const { st, j } = await window.__mods(); j.seekJourney(dist, stopT); st.state.nextJoint = st.state.dist + 100000; st.state.bobs.length = 0; st.state.hits.length = 0; window.__step(2, 16); return st.state.dist; };
+  window.__jst = async () => { const { st } = await window.__mods(); const s = st.state; return { t: +s.t.toFixed(2), dist: +s.dist.toFixed(1), speed: +s.speed.toFixed(2), phase: s.phase, door: +s.door.toFixed(2), stopT: +s.stopT.toFixed(2), k: s.station && s.station.k }; };
+  // 駅 k の3コマ: 進入中（残り約600・減速中）/ 停車・ドア全開 / 発車直後（pos+300）。実際のループを 50ms 刻みで進めて撮る
+  window.__station = async (k, withRaw) => {
+    const { st, sn } = await window.__mods(); const S = st.state, s = sn.stationAt(k), views = [], raws = [], info = [];
+    const shot = async (tag) => { views.push(window.__view()); if (withRaw) raws.push(await window.__raw(S.dist, 480, 2)); info.push(tag + ' ' + JSON.stringify(await window.__jst())); };
+    await window.__goto(s.pos - 600); await shot('approach');
+    for (let i = 0; i < 2000 && !(S.phase === 'stop' && S.door >= 1); i++) window.__step(1, 50);
+    window.__step(10, 50); await shot('open');
+    for (let i = 0; i < 4000 && !(S.phase !== 'stop' && S.dist >= s.pos + 300); i++) window.__step(1, 50);
+    await shot('depart');
+    return { s, views, raws, info };
+  };
+  // 固定ステップで secs 秒進め、進行を記録して検証する（描画もするが画像は保存しない）
+  window.__journey = async (secs, dt) => {
+    const { st, sn } = await window.__mods(); const S = st.state, log = [], ev = [];
+    let prev = { ...await window.__jst() }, maxJump = 0, maxAcc = 0, maxDec = 0, crawl = 0, lastV = S.speed;
+    const n = Math.round(secs / dt);
+    for (let i = 0; i < n; i++) {
+      const ph0 = S.phase, k0 = S.station.k, v0 = S.speed, d0 = S.dist;
+      window.__step(1, dt * 1000);
+      const a = (S.speed - v0) / dt; maxAcc = Math.max(maxAcc, a); maxDec = Math.min(maxDec, a);
+      if (i > 0) maxJump = Math.max(maxJump, Math.abs(a - lastV)); lastV = a;
+      if (S.phase === 'brake' && S.speed < 3) crawl += dt;
+      if (S.dist < d0 - 1e-9) ev.push('BACKWARD at t=' + S.t.toFixed(2));
+      if (S.phase !== ph0) {
+        const s = S.station, e = { t: +S.t.toFixed(2), from: ph0, to: S.phase, k: s.k, dist: +S.dist.toFixed(3), speed: +S.speed.toFixed(2) };
+        if (S.phase === 'brake') e.remain = +(s.pos - S.dist).toFixed(1);
+        if (S.phase === 'stop') { e.err = +(S.dist - s.pos).toFixed(6); e.name = s.name + '/' + s.kana; e.size = +s.size.toFixed(2); e.len = s.len; }
+        if (ph0 === 'stop') e.nextK = s.k;
+        ev.push(JSON.stringify(e));
+      }
+      if (i % Math.round(10 / dt) === 0) log.push('t=' + S.t.toFixed(0) + ' d=' + S.dist.toFixed(0) + ' v=' + S.speed.toFixed(1) + ' ' + S.phase + (S.phase === 'stop' ? ' door=' + S.door.toFixed(2) : ''));
+    }
+    return { ev, log, maxAcc: +maxAcc.toFixed(2), maxDec: +maxDec.toFixed(2), maxAccJumpPerStep: +maxJump.toFixed(2), crawlSecs: +crawl.toFixed(2),
+      stations: [1, 2, 3, 4].map(k => { const s = sn.stationAt(k); return k + ':' + s.name + '(' + s.kana + ') pos=' + s.pos + ' size=' + s.size.toFixed(2) + ' len=' + s.len + ' x0=' + s.x0 + ' x1=' + s.x1; }) };
+  };
   window.__view = () => document.getElementById('view').toDataURL('image/png');
   // 複数の dataURL を縦に並べ、ラベル用の余白なしで1枚にする
   window.__sheet = async (urls) => {
@@ -116,11 +154,32 @@ for (const seed of seedArg.split(',')) for (const style of styleArg.split(',')) 
     if (pass === 0) console.log(`seed ${seed} ${style}: ` + plan.map(p => `${p[0]}@${p[1]}`).join('  '));
     const h = [];
     if (mode === 'run') { // 実際のループを 50ms 刻みで 150 秒ぶん進め、30 秒ごとに画面を保存
-      const urls = []; for (let k = 0; k < 5; k++) { await pg.ev('__step(600, 50)'); urls.push(await pg.ev('__view()')); }
+      const urls = [], lg = []; for (let k = 0; k < 5; k++) { await pg.ev('__step(600, 50)'); urls.push(await pg.ev('__view()')); lg.push(JSON.stringify(await pg.ev('__jst()'))); }
+      if (pass === 0) console.log('  ' + lg.join('\n  '));
       const dist = await pg.ev('(async () => Math.round((await __mods()).st.state.dist))()');
       h.push(save(`run-${seed}-${style}.png`, await pg.ev(`__sheet(${JSON.stringify(urls)})`)) + ' dist=' + dist);
     } else if (mode === 'perf') { // チャンク生成の所要時間（Date.now は差し替えていない）
       console.log('  perf ' + await pg.ev(`(async () => { const { sc } = await __mods(); const out = []; for (const L of sc.layers) { let mx = 0; const t0 = Date.now(); let n = 0; for (let i = -2; i < 400; i++) { L.cache.clear(); const a = Date.now(); L.chunk(i); mx = Math.max(mx, Date.now() - a); n++; } out.push('layer' + L.id + ' mean=' + ((Date.now() - t0) / n).toFixed(2) + 'ms max=' + mx + 'ms'); } return out.join(' | '); })()`));
+    } else if (mode === 'station' || mode.startsWith('station:')) { // 駅ごとに 進入中 / 停車・ドア全開 / 発車直後 の3コマ
+      const ks = mode.startsWith('station:') ? mode.slice(8).split(',').map(Number) : [1, 2];
+      for (const k of ks) {
+        const r = await pg.ev(`__station(${k}, true)`);
+        if (pass === 0) console.log(`  station ${k}: ${r.s.name}（${r.s.kana}） pos=${r.s.pos} size=${r.s.size.toFixed(2)} len=${r.s.len} x0=${r.s.x0} x1=${r.s.x1}\n    ` + r.info.join('\n    '));
+        h.push(save(`station-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.views)})`)));
+        h.push(save(`station-raw-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.raws)})`)));
+      }
+    } else if (mode === 'door' || mode.startsWith('door:')) { // 駅 k に停車して、ドアが開く途中の3コマ（開き始め / 半開き / ほぼ全開）
+      const ks = mode.startsWith('door:') ? mode.slice(5).split(',').map(Number) : [1, 2];
+      for (const k of ks) {
+        const urls = []; for (const t of [1.5, 2.0, 2.6]) { await pg.ev(`(async () => __goto((await __mods()).sn.stationAt(${k}).pos, ${t}))()`); urls.push(await pg.ev('__view()')); }
+        h.push(save(`door-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(urls)})`)));
+      }
+    } else if (mode === 'journey' || mode.startsWith('journey:')) { // 進行のログと検証（画像なし）
+      const secs = mode.startsWith('journey:') ? Number(mode.slice(8)) : 420;
+      const r = await pg.ev(`__journey(${secs}, 0.05)`);
+      if (pass === 0) console.log('  ' + r.stations.join('\n  ') + '\n  events:\n    ' + r.ev.join('\n    ') + '\n  every 10s: ' + r.log.join(' | ') +
+        `\n  maxAcc=${r.maxAcc} maxDec=${r.maxDec} maxAccJumpPerStep=${r.maxAccJumpPerStep} crawl(brake & v<3)=${r.crawlSecs}s`);
+      h.push(r.ev.join(';'));
     } else if (mode.startsWith('pano:')) { // 横に長い絵（チャンクの継ぎ目の確認）
       const urls = []; for (const d of mode.slice(5).split(',')) urls.push(await pg.ev(`__raw(${d}, 1280, 1)`));
       h.push(save(`pano-${seed}-${style}.png`, await pg.ev(`__sheet(${JSON.stringify(urls)})`)));

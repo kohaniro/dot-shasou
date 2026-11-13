@@ -7,6 +7,8 @@ export const RAIL = 250; // 25 m レール（線路際・基準ドットで 1ド
 export const state = {
   seed: 1,
   dist: 0, t: 0, speed: 240, playing: true, last: performance.now(),
-  nextJoint: 120, bobs: [],
+  nextJoint: 120, bobs: [], hits: [],
+  // 進行（journey.js が書き換える）: phase 'run' | 'brake' | 'stop' | 'depart'、station は stations.js の駅オブジェクト
+  phase: 'run', station: null, stopT: 0, door: 0, accel: 0,
   showPass: true
 };
