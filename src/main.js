@@ -5,7 +5,6 @@ import { clouds, far, mid, near, track, plat, truss, tunnel, layers } from './sc
 import { bridgeNear, poleOnBridge } from './scenery/bridge.js';
 import { tunnelNear, tunnelCovers, poleInTunnel, tunnelGlass } from './scenery/tunnel.js';
 import { drawDoorBackdrop } from './scenery/station.js';
-import { drawSelfTrain } from './scenery/selftrain.js';
 import { stationNear } from './stations.js';
 import { interior, drawInterior, drawStraps, drawDoors, doorShift, DOOR_W } from './interior.js';
 import { drawPassengers } from './passengers.js';
@@ -112,8 +111,6 @@ function render() {
   if (bridgeNear(dist + W / 2)) lay(truss);
   // トンネルの壁と坑門（架線より手前）。トンネルの近くでだけ描く
   if (dark || tunnelNear(dist + W / 2)) lay(tunnel);
-  // きついカーブの内側: 窓の右端に前方の車両（低頻度の演出）
-  drawSelfTrain(cx, dist, cv, oy);
   // ガラスの映り込み
   if (STYLE.glass) {
     cx.globalAlpha = 0.08; cx.fillStyle = '#ffffff';

@@ -44,7 +44,7 @@ node .claude/skills/shots/shots.mjs "<scratchpad>/shots" 1234,7 real,soft,game,m
 
 `raw` / `view` は、「各バイオームの中心6点（a。最初に現れた区間。山間と海沿いは別の周になる）」と「遷移の境目5点（b。隣り合う組ごとに最初の1回）」を縦に並べた1枚にする（区切りはマゼンタの帯）。撮る地点の走行距離は実行時に表示されるので、`pano:` / `zoom:` の距離指定に使える。
 
-景色だけの絵（`raw` / `pano:` / `zoom:` と各 mode の `-raw-`）は、高架の下げ幅（`Layer` の `drop` × `elev`）は反映するが、カーブの上下のずらし（カント）と揺れは反映しない。きついカーブの内側で窓の右端に出る前方の車両（`scenery/selftrain.js`。Layer ではなく `render()` が直接描く）も入らないので、車内込みの画面（`curve:` / `at:`）で見る。
+景色だけの絵（`raw` / `pano:` / `zoom:` と各 mode の `-raw-`）は、高架の下げ幅（`Layer` の `drop` × `elev`）は反映するが、カーブの上下のずらし（カント）と揺れは反映しない。
 
 ## 出力の読み方
 
