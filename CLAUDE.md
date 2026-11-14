@@ -22,6 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 描画を変えたら `shots` スキル（`node .claude/skills/shots/shots.mjs <出力フォルダ> <シード,…> <絵柄,…> [mode]`）で画像を出し、Read で開いて確かめる。決定性（同じシードで同じ絵）とコンソールエラーも同時に確認できる。出力はプロジェクトの外（scratchpad）に置く。
 - 見た目を変えないリファクタリングは、変更前後で `shots` の出力ハッシュが一致することを確かめる。
 - 設定は `localStorage`（`shasou-vol`, `shasou-style`, `shasou-pass`）に保存される。`shasou-pass` は `on` / `sil` / `off`（古い値 `1` / `0` も読む）。
+- **公開**: GitHub Pages（`kohaniro/dot-shasou` の `main` / root）。`git push origin main` で自動再公開される（1〜2分）。公開先は https://kohaniro.github.io/dot-shasou/ 。サブパス配下で動くので、`import` や素材の参照は相対パスで書き、`/` で始まる絶対パスを使わないこと。`.nojekyll` は消さない。公開はユーザーが push して行う（勝手に push しない）。
 
 ## 作業の進め方（モデルの使い分け）
 
