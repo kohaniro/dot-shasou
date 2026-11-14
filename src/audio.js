@@ -19,7 +19,9 @@ export const VOL = {
   tunnel: 0.5,      // トンネル: 低域の共鳴（こもった響き）。巡航時・トンネルの中
   tunnelEcho: 0.5,  // トンネル: 継ぎ目の音を反響バスへ送る量
   bridge: 0.8,      // 鉄橋: 金属的な鳴り「ゴーッ」。巡航時・橋の上
-  bridgeRing: 0.35  // 鉄橋: 継ぎ目の音に足す金属の響き
+  bridgeRing: 0.35, // 鉄橋: 継ぎ目の音に足す金属の響き
+  rain: 0.022,      // 雨: 窓・車体をたたく細かい雨の「サーッ」（強い雨・巡航時）
+  rainRoof: 0.05    // 雨: 屋根を打つ粒の「パラパラ」（強い雨・停車時）
 };
 /* トンネルの中での変わり方（どれも featureMix().tunnel に比例して効く） */
 export const TUNNEL = {
@@ -40,10 +42,25 @@ export const BRIDGE = {
   ringQ: 14,
   ringDur: 0.32      // その減衰の長さ（秒）
 };
+/* 雨音（どちらも state.wx.rain に連動し、トンネルの中では止む）。
+   hiss: 白色ノイズを高域のバンドパスに通した連続音。走行中は風まじりで強く、明るくなる
+   roof: 粒の当たる音をまばらに並べたループ（initAudio で作る）。停車中にはっきり聞こえ、走行音が上がると埋もれる */
+export const RAIN = {
+  curve: 1.2,                 // 強さ → 音量のカーブ（指数）
+  hissFreq: [2600, 4200],     // hiss のバンドパスの中心（停車時 / 巡航時。Hz）
+  hissQ: 0.5,
+  hissStop: 0.4,              // 停車時の hiss（巡航時を 1 として）
+  roofFreq: 1500, roofQ: 0.7, // roof のバンドパス
+  roofRun: 0.35,              // 巡航時の roof（停車時を 1 として）
+  drops: 150,                 // roof のループ（2 秒）に置く粒の数
+  dropDur: [0.012, 0.045]     // 粒1つの減衰の長さ（秒）
+};
+/* 雪: 音を吸うので、走行音を少しだけ丸める（state.wx.snow に比例） */
+export const SNOW = { rumbleCut: 0.12, rumbleSoft: 0.1, windCut: 0.3 };
 const V_CRUISE = 240;
 
 export let ac = null, master = null, white = null, rumbleF = null, motor = null, soundOn = false, volume = 0.6;
-let rumbleG = null, windG = null, motorG = null, motorF = null, brakeG = null, brakeF = null, tunG = null, bridgeG = null, echoIn = null;
+let rainG = null, rainF = null, roofG = null, rumbleG = null, windG = null, motorG = null, motorF = null, brakeG = null, brakeF = null, tunG = null, bridgeG = null, echoIn = null;
 export function setSoundOn(v) { soundOn = v; }
 export function setVolume(v) { volume = v; }
 const loopNoise = buf => { const s = ac.createBufferSource(); s.buffer = buf; s.loop = true; return s; };
@@ -92,6 +109,19 @@ export function initAudio() {
   bridgeG = ac.createGain(); bridgeG.gain.value = 0;
   for (const f of BRIDGE.freqs) { const b = ac.createBiquadFilter(); b.type = 'bandpass'; b.frequency.value = f; b.Q.value = BRIDGE.q; gs.connect(b); b.connect(bridgeG); }
   bridgeG.connect(master); gs.start();
+  // 雨: 連続音（hiss）と、屋根を打つ粒のループ（roof）。音量は driveAudio で動かす
+  const rs = loopNoise(white);
+  rainF = ac.createBiquadFilter(); rainF.type = 'bandpass'; rainF.frequency.value = RAIN.hissFreq[0]; rainF.Q.value = RAIN.hissQ;
+  rainG = ac.createGain(); rainG.gain.value = 0;
+  rs.connect(rainF); rainF.connect(rainG); rainG.connect(master); rs.start();
+  const patter = ac.createBuffer(1, n, ac.sampleRate), pd = patter.getChannelData(0);
+  for (let k = 0; k < RAIN.drops; k++) { // 粒: 減衰する短いノイズ。大きさ・長さはまちまち
+    const at = Math.floor(Math.random() * n), dur = RAIN.dropDur[0] + Math.random() * (RAIN.dropDur[1] - RAIN.dropDur[0]), len = Math.floor(dur * ac.sampleRate), amp = 0.25 + 0.75 * Math.random() * Math.random();
+    for (let j = 0; j < len; j++) pd[(at + j) % n] += (Math.random() * 2 - 1) * amp * Math.exp(-5 * j / len);
+  }
+  const ps = loopNoise(patter), pf = ac.createBiquadFilter(); pf.type = 'bandpass'; pf.frequency.value = RAIN.roofFreq; pf.Q.value = RAIN.roofQ;
+  roofG = ac.createGain(); roofG.gain.value = 0;
+  ps.connect(pf); pf.connect(roofG); roofG.connect(master); ps.start();
   driveAudio(true);
 }
 const running = () => soundOn && ac && ac.state === 'running' && state.rate === 1; // 早送り中は鳴らさない
@@ -103,9 +133,16 @@ export function driveAudio(now = false) {
     const v = Math.max(0, state.speed), vn = Math.min(1.1, v / V_CRUISE), T = ac.currentTime, tc = now ? 0.01 : 0.15;
     const acc = state.phase === 'depart' ? Math.min(1, Math.max(0, state.accel / 8)) : 0;
     const { tunnel: tu, bridge: br } = featureMix(state.dist + W / 2); // 席の位置がトンネル・橋の中か（0..1）
-    rumbleG.gain.setTargetAtTime(VOL.rumble * Math.pow(vn, 1.3) * (1 + TUNNEL.rumbleBoost * tu), T, tc);
-    rumbleF.frequency.setTargetAtTime((180 + v) * (1 - TUNNEL.rumbleCut * tu), T, tc);
-    windG.gain.setTargetAtTime(VOL.wind * vn * vn * (1 - TUNNEL.windCut * tu), T, tc);
+    const wx = state.wx || {}, rn = Math.pow(Math.max(0, wx.rain || 0), RAIN.curve) * (1 - tu), sn = Math.max(0, wx.snow || 0) * (1 - tu), v1 = Math.min(1, vn);
+    rumbleG.gain.setTargetAtTime(VOL.rumble * Math.pow(vn, 1.3) * (1 + TUNNEL.rumbleBoost * tu) * (1 - SNOW.rumbleSoft * sn), T, tc);
+    rumbleF.frequency.setTargetAtTime((180 + v) * (1 - TUNNEL.rumbleCut * tu) * (1 - SNOW.rumbleCut * sn), T, tc);
+    windG.gain.setTargetAtTime(VOL.wind * vn * vn * (1 - TUNNEL.windCut * tu) * (1 - SNOW.windCut * sn), T, tc);
+    // 雨音: 走行中は風まじりの連続音が強く明るく、停車中は屋根を打つ粒がはっきり。トンネルの中では止む
+    if (rainG) {
+      rainG.gain.setTargetAtTime(VOL.rain * rn * (RAIN.hissStop + (1 - RAIN.hissStop) * v1), T, tc);
+      rainF.frequency.setTargetAtTime(RAIN.hissFreq[0] + (RAIN.hissFreq[1] - RAIN.hissFreq[0]) * v1, T, tc);
+      roofG.gain.setTargetAtTime(VOL.rainRoof * rn * (1 - (1 - RAIN.roofRun) * v1), T, tc);
+    }
     // 速度に比例させるので、停車中はどちらも 0
     tunG.gain.setTargetAtTime(VOL.tunnel * Math.pow(vn, 1.3) * tu, T, tc);
     bridgeG.gain.setTargetAtTime(VOL.bridge * Math.pow(vn, 1.3) * br, T, tc);

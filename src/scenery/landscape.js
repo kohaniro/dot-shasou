@@ -1,9 +1,10 @@
 import { SH } from '../state.js';
 import { ri, pick } from '../rng.js';
-import { R, ROOF, HOUSE_WALL, GREENS } from '../palette.js';
+import { R, RE, ROOF, HOUSE_WALL, GREENS } from '../palette.js';
 import { pickBiome } from '../world.js';
 import { env } from '../layers.js';
 import { hz, tree, bush, utilityPole, midTree } from './common.js';
+import { glow, halo, litNow, LAMPS } from '../lights.js';
 import { farTower, midBlock, nearCity } from './city.js';
 import { nearResi, nearSuburb, midHouse, vegGround, lotGround } from './suburb.js';
 import { nearRural, paddyGround, hills, midFarm, midGreenhouses, midGrove, midPylon } from './rural.js';
@@ -35,12 +36,14 @@ function ground(g, i, r, L, y0, S) {
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 export function drawFar(g, i, r, L) {
   const cw = L.cw, base = 52, town = hz('#8fa3b3', 0.35), field = hz('#86b04a', 0.3), wood = hz(GREENS[2], 0.35);
+  const night = litNow() > 0;
   farRange(g, L, i, base); // 山間: 奥の高い山並み（山間でないチャンクでは何もしない。乱数は使わない）
   hills(g, r, L, i, base);
   for (let x = 0; x < cw; x++) { // 地面: 街の灰色と田畑の緑を、開けた土地の割合でディザして混ぜる
     const e = env(L, i, x), open = (e.paddy + e.veg + e.lot) * 16;
     R(g, x, base, 1, SH - base, town);
     if (open > 0.5) for (let y = base; y < 60; y++) if (BAYER[(x & 3) + ((y & 3) << 2)] < open) R(g, x, y, 1, 1, field);
+    if (night) { const v = glow(x, base, 0.34 * e.build * e.build + 0.012); if (v >= 0) RE(g, x, base + 1 + Math.floor(v * 37) % 6, 1, 1, LAMPS.far[Math.floor(v * LAMPS.far.length)]); } // 夜: 遠くの街のきらめき（街ほど密に、田園はぽつぽつ）
   }
   seaFar(g, i, L, base); // 海沿い: 水平線と沖（海沿いでないチャンクでは何もしない）
   farRidge(g, L, i, base); // 山間: 手前の濃い尾根と山すそ
@@ -68,6 +71,12 @@ function midTown(g, r, x, w, y0, e) { // 街の地面: 低い屋根の連なり
   for (let k = Math.round(w * 0.16 * e.roofs); k > 0; k--) {
     const c = hz(pick(r, ROOF.concat(HOUSE_WALL)), 0.5), rw = ri(r, 4, 9);
     R(g, x + ri(r, 0, Math.max(0, w - rw)), y0 + ri(r, 0, 7), rw, ri(r, 1, 2), c);
+  }
+  if (litNow() > 0) for (let xx = x; xx < x + w; xx++) { // 夜: 屋根の連なりの中の窓あかり、ところどころ街灯
+    const v = glow(xx, y0, 0.11 * e.roofs + 0.01); if (v < 0) continue;
+    const yy = y0 + 1 + Math.floor(v * 53) % 8;
+    if (v < 0.12) { RE(g, xx, yy, 1, 1, '#eef4ff'); halo(g, xx - 1, yy, 3, 2, '#eef4ff', 0.22); }
+    else RE(g, xx, yy, v > 0.7 ? 2 : 1, 1, LAMPS.mid[Math.floor(v * 31) % LAMPS.mid.length]);
   }
 }
 const MID = { min: 30, max: 80, rows: [2, 3, 4], far: 0.3, town: midTown, sea: seaGroundMid };

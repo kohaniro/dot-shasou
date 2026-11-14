@@ -3,6 +3,7 @@ import { world, BIOME_KEYS } from './world.js';
 import { stationAt } from './stations.js';
 import { featureNear, nextFeature } from './features.js';
 import { nextCurve, nextElev, V_MAX } from './course.js';
+import { TOD, DAWN, DUSK, nextTimePoint, nextWeatherPoint } from './clock.js';
 import { cruiseAt, brakeDist, jumpTo } from './journey.js';
 import { passengers } from './passengers.js';
 import { driveAudio, syncAudio } from './audio.js';
@@ -61,13 +62,22 @@ function featInfo(c) {
   const n = nextFeature(c);
   return n ? `次は ${FNAME[n.type]}${n.n} まで ${Math.round(n.a - c)}` : '';
 }
+/* 次の夕方・朝・天気の変わり目の手前: 移り変わりが始まる地点が窓の中央に来る BEFORE ドット手前（state.dist の値）。固定は見ない本来の時刻・天気で探す */
+export const beforeTime = hour => nextTimePoint(state.dist + W / 2 + BEFORE + 1, hour) - W / 2 - BEFORE;
+export function beforeWeather() { const d = nextWeatherPoint(state.dist + W / 2 + BEFORE + 1); return d === null ? null : d - W / 2 - BEFORE; }
+const clock = h => { const m = Math.floor(h * 60 + 1e-6); return String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+function toneInfo() {
+  const w = state.wx, tn = state.tone, f = v => v.toFixed(2);
+  return `${clock(state.hour)}${state.todFix != null ? '（固定）' : ''} ／ cloud ${f(w.cloud)} rain ${f(w.rain)} snow ${f(w.snow)}${state.wxFix ? '（固定）' : ''}` +
+    (tn ? ` ／ トーン ${tn.key}` + (state.toneTo ? ` → ${state.toneTo.key} ${Math.round(state.toneK * 100)}%` : '') : '');
+}
 function info() {
   const c = state.dist + W / 2, e = world(c), st = state.station, fi = featInfo(c);
   const ws = BIOME_KEYS.filter(k => e[k] >= 0.05).map(k => k + ' ' + e[k].toFixed(2)).join(' ');
   const sg = v => (v > 0 ? '+' : '') + v.toFixed(2);
   return `距離 ${Math.floor(state.dist)} ／ ${ws} ／ ${state.phase} ${Math.round(state.speed * 0.36)}km/h（目標 ${Math.round(cruiseAt(state.dist, st ? st.pos : Infinity) * 0.36)}）` +
     ` ／ curve ${sg(state.curve)} elev ${state.elev.toFixed(2)}` +
-    (st ? ` ／ ${st.name} まで ${Math.max(0, Math.round(st.pos - state.dist))}` : '') + (fi ? ` ／ ${fi}` : '') + ` ／ 乗客 ${passengers.length}人`;
+    (st ? ` ／ ${st.name} まで ${Math.max(0, Math.round(st.pos - state.dist))}` : '') + (fi ? ` ／ ${fi}` : '') + ` ／ 乗客 ${passengers.length}人 ／ ${toneInfo()}`;
 }
 
 /* 初期化。デバッグ表示が有効なら、毎フレーム呼ぶ関数 tick(now) を返す（表示の更新は 0.25 秒に1回） */
@@ -96,6 +106,21 @@ export function initDebug(render) {
   for (const [id, next] of [['dbg-curve', nextCurve], ['dbg-elev', nextElev]]) {
     const b = document.getElementById(id);
     if (b) b.addEventListener('click', () => { const d = beforeCourse(next); if (d !== null) jump(d); });
+  }
+  // 時間帯・天気の固定（自動 = 走行距離から決まる値。固定を替えると、次の描画でフェードせずにその色調へ替わる。停止中でも替わる）
+  const fixRow = (id, attr, set) => {
+    const bs = [...document.querySelectorAll('#' + id + ' button[data-' + attr + ']')];
+    for (const b of bs) b.addEventListener('click', () => {
+      set(b.dataset[attr]);
+      for (const o of bs) o.setAttribute('aria-pressed', String(o === b));
+      if (!state.playing) render(); show();
+    });
+  };
+  fixRow('dbg-tod', 'tod', v => { state.todFix = v === 'auto' ? null : TOD[v]; });
+  fixRow('dbg-wx', 'wx', v => { state.wxFix = v === 'auto' ? null : v; });
+  for (const [id, at] of [['dbg-dusk', () => beforeTime(DUSK[0])], ['dbg-dawn', () => beforeTime(DAWN[0])], ['dbg-wxnext', beforeWeather]]) {
+    const b = document.getElementById(id);
+    if (b) b.addEventListener('click', () => { const d = at(); if (d !== null) jump(d); });
   }
   let last = -1e9;
   show();

@@ -1,6 +1,6 @@
 import { W, SH, state } from '../state.js';
 import { hash32, rng, ri, vnoise } from '../rng.js';
-import { R, P, rgb, shade, tint, mix, GRASS, GREENS, CONC, ROCK, MOUNT_FAR, HILL_BACK, CEDAR, TUN_DARK, TUN_LINING, TUN_LAMP, TUN_EXIT, TUN_SIGNAL, PORTAL } from '../palette.js';
+import { R, P, setTone, rgb, shade, tint, mix, GRASS, GREENS, CONC, ROCK, MOUNT_FAR, HILL_BACK, CEDAR, TUN_DARK, TUN_LINING, TUN_LAMP, TUN_EXIT, TUN_SIGNAL, PORTAL } from '../palette.js';
 import { distAt } from '../layers.js';
 import { featuresIn, featureNear } from '../features.js';
 import { hz } from './common.js';
@@ -196,6 +196,8 @@ function fixtures(g, L, ox, p, k0, k1) {
 function wallChunk(g, L, ox, p) {
   const cw = L.cw, { XA, XB } = p, T = tables(p);
   const x0 = Math.max(0, XA - ox), x1 = Math.min(cw, XB - ox);
+  const tone = setTone(null), sun = tone.tone ? Math.max(0.05, tone.tone.sun) : 1; // sun: 坑口に差す外光の強さ（夜はほとんど差さない）
+  // トンネルの中（壁・照明）は時間帯・天気のトーンをかけない。坑門と外の側壁は景色なので、下で戻してから描く
   if (x1 > x0) {
     // このチャンクに届く光源と小物
     const k0 = Math.max(0, Math.floor((ox - 320 - p.l0) / p.pitch)), k1 = Math.max(-1, Math.floor((ox + cw + 320 - p.l0) / p.pitch));
@@ -220,7 +222,7 @@ function wallChunk(g, L, ox, p) {
         if (kind < 0) kind = texKind(p, X, y);
         // 坑口からの外光: 坑門の壁の厚みは明るく、その奥へすっと落ちる
         acc[0] = 0; acc[2] = 0; acc[3] = 0;
-        acc[1] = (up < PW + 340 ? Math.exp(-Math.max(0, up - PW) / 62) : 0) + amb; // 外光と、車内の明かり
+        acc[1] = (up < PW + 340 ? Math.exp(-Math.max(0, up - PW) / 62) * sun : 0) + amb; // 外光と、車内の明かり
         for (let n = 0; n < src.length; n++) {
           const s = src[n], dx = (X - s.X) / s.rx; if (dx > 4 || dx < -4) continue;
           const dy = (y - s.y) / s.ry, v = s.I * (1.06 / (1 + dx * dx + dy * dy) - 0.06); if (v > 0) acc[s.tab] += v;
@@ -238,6 +240,7 @@ function wallChunk(g, L, ox, p) {
     }
     fixtures(g, L, ox, p, k0, k1);
   }
+  setTone(tone);
   // 坑門の壁の厚み: 外光を受けた坑門の材（外の角は明るく、奥の角はかげ）
   const [pc, pl, pd] = PORTAL[p.portal];
   for (const [X0, dir] of [[XA, 1], [XB - 1, -1]]) for (let k = 0; k < PW; k++) {
@@ -393,13 +396,22 @@ export function poleInTunnel(x) {
   return !!f && f.type === 'tunnel';
 }
 /* 窓への映り込み: トンネルの中では、暗い窓ガラスに車内の天井の照明の列と、こちら側の壁の明るみがうっすら映る。
-   壁が画面を覆うにつれて濃くなる（坑口では外光に負けて見えない）。絵柄の glass フラグは呼ぶ側で見る */
-export function tunnelGlass(g, dist) {
+   壁が画面を覆うにつれて濃くなる（坑口では外光に負けて見えない）。絵柄の glass フラグは呼ぶ側で見る。
+   night（0 昼 〜 1 夜。main.js がトーンの sun から決める）: 外が暗いほど、トンネルの外でも映る（トンネルの中よりは薄く。外の灯りを邪魔しない濃さ） */
+const NIGHT_GLASS = 0.5;
+export function tunnelGlass(g, dist, night = 0) {
   const f = featureNear(dist + W / 2, 100);
-  if (!f || f.type !== 'tunnel') return;
-  const wx = Math.floor(dist * TUN_F), k = clamp01((Math.min(wx + W, toX(f.b, TUN_F) - 80) - Math.max(wx, toX(f.a, TUN_F) + 80)) / W);
+  let k = 0;
+  if (f && f.type === 'tunnel') { const wx = Math.floor(dist * TUN_F); k = clamp01((Math.min(wx + W, toX(f.b, TUN_F) - 80) - Math.max(wx, toX(f.a, TUN_F) + 80)) / W); }
+  k = Math.max(k, night * NIGHT_GLASS);
   if (k <= 0) return;
   g.fillStyle = P('#eef4ff');
+  if (night > 0) { // 夜: つり革の影と、となりに座る人の頭と肩が、暗いガラスにぼんやり浮かぶ
+    g.globalAlpha = 0.06 * night;
+    for (let s = 0; s < 8; s++) { const x = 74 + s * 28; if (x > 150 && x < 170) continue; g.fillRect(x, 28, 1, 10); g.fillRect(x - 1, 38, 3, 1); g.fillRect(x - 1, 43, 3, 1); g.fillRect(x - 2, 39, 1, 4); g.fillRect(x + 2, 39, 1, 4); }
+    g.globalAlpha = 0.045 * night;
+    for (const x of [124, 190]) { g.fillRect(x + 1, 84, 5, 1); g.fillRect(x, 85, 7, 7); g.fillRect(x + 1, 92, 5, 1); g.fillRect(x - 3, 94, 13, 10); g.fillRect(x - 5, 97, 17, 7); }
+  }
   for (const [a, y, h] of [[0.24, 33, 1], [0.09, 34, 1], [0.035, 86, 18]]) {
     g.globalAlpha = a * k;
     if (h > 1) { g.fillRect(50, y, 108, h); g.fillRect(162, y, 108, h); continue; }

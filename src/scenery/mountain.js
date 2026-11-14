@@ -5,6 +5,7 @@ import { world } from '../world.js';
 import { distAt } from '../layers.js';
 import { tunnelProx } from '../features.js';
 import { hz, tree, bush, utilityPole } from './common.js';
+import { win } from '../lights.js';
 import { midHouse } from './suburb.js';
 import { bShed, midPylon } from './rural.js';
 
@@ -287,7 +288,7 @@ function kominka(g, r, x, b, w) { // 山あいの民家: 板壁としっくい�
   cedar(g, r, x + (r() < 0.5 ? 3 : w - 4), b - 1, ri(r, 24, 32), pick(r, CEDAR));
   R(g, x, bb, w, 2, ROCK); for (let xx = x + ri(r, 0, 2); xx < x + w - 1; xx += ri(r, 2, 4)) R(g, xx, bb + (xx & 1), 1, 1, shade(ROCK, 0.25)); // 石垣
   R(g, x + 2, top, w - 4, h, plaster); R(g, x + 2, bb - 3, w - 4, 3, wood); R(g, x + w - 3, top, 1, h, shade(plaster, 0.25));
-  R(g, x + 4, top + 2, w - 13, 3, WIN_D); for (let xx = x + 6; xx < x + w - 9; xx += 3) R(g, xx, top + 2, 1, 3, '#cfcabd');
+  win(g, x + 4, top + 2, w - 13, 3, WIN_D, 'home', 0.65); for (let xx = x + 6; xx < x + w - 9; xx += 3) R(g, xx, top + 2, 1, 3, '#cfcabd'); // 夜: 障子ごしの明かり
   R(g, x + w - 8, bb - 5, 3, 5, shade(wood, 0.35));
   ink(g, x + 2, top, w - 4, h);
   for (let k = 0; k < rh; k++) { const s = (rh - 1 - k) * 2; R(g, x + s, top - rh + k + 1, w - 2 * s, 1, k === 0 ? tint(rc, 0.3) : (k & 1) ? rc : shade(rc, 0.08)); }

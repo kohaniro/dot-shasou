@@ -53,7 +53,7 @@ body{
 .debug button{padding:3px 12px}
 .dbg-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
 .dbg-cap{min-width:2.5em}
-#dbg-rate button{min-width:3.4em}
+#dbg-rate button,#dbg-tod button,#dbg-wx button{min-width:3.4em}
 .dbg-info{font-variant-numeric:tabular-nums;min-height:2.8em}
 </style>
 
@@ -93,6 +93,25 @@ body{
     <button id="dbg-bridge" type="button">次の橋へ</button>
     <button id="dbg-curve" type="button">次のカーブへ</button>
     <button id="dbg-elev" type="button">次の高架へ</button>
+    <button id="dbg-dusk" type="button">次の夕方へ</button>
+    <button id="dbg-dawn" type="button">次の朝へ</button>
+    <button id="dbg-wxnext" type="button">次の天気の変わり目へ</button>
+  </div>
+  <div class="dbg-row" id="dbg-tod" role="group" aria-label="時間帯の固定">
+    <span class="dbg-cap">時間帯</span>
+    <button type="button" data-tod="auto" aria-pressed="true">自動</button>
+    <button type="button" data-tod="dawn" aria-pressed="false">朝</button>
+    <button type="button" data-tod="noon" aria-pressed="false">昼</button>
+    <button type="button" data-tod="dusk" aria-pressed="false">夕</button>
+    <button type="button" data-tod="night" aria-pressed="false">夜</button>
+  </div>
+  <div class="dbg-row" id="dbg-wx" role="group" aria-label="天気の固定">
+    <span class="dbg-cap">天気</span>
+    <button type="button" data-wx="auto" aria-pressed="true">自動</button>
+    <button type="button" data-wx="clear" aria-pressed="false">晴</button>
+    <button type="button" data-wx="cloud" aria-pressed="false">曇</button>
+    <button type="button" data-wx="rain" aria-pressed="false">雨</button>
+    <button type="button" data-wx="snow" aria-pressed="false">雪</button>
   </div>
   <output id="dbg-info" class="dbg-info"></output>
 </div>

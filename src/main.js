@@ -1,6 +1,6 @@
 import { W, SY, SH, VY, VH, SUB, RAIL, state } from './state.js';
-import { STYLE, palCache, P, R } from './palette.js';
-import { sky, buildSky } from './scenery/sky.js';
+import { STYLE, clearPal, setTone, P, R } from './palette.js';
+import { sky, skyB } from './scenery/sky.js';
 import { clouds, far, mid, near, track, plat, truss, tunnel, layers } from './scenery/index.js';
 import { bridgeNear, poleOnBridge } from './scenery/bridge.js';
 import { tunnelNear, tunnelCovers, poleInTunnel, tunnelGlass } from './scenery/tunnel.js';
@@ -11,7 +11,9 @@ import { drawPassengers } from './passengers.js';
 import { ac, soundOn, click, driveAudio } from './audio.js';
 import { featureMix } from './features.js';
 import { curve, elev } from './course.js';
-import { layerOff } from './layers.js';
+import { tones, viewOff } from './layers.js';
+import { syncTone, stepTone, resetTone } from './tone.js';
+import { drawFall, drawGlassRain } from './weather.js';
 import { stepJourney } from './journey.js';
 import { setSeed, seedFromHash, setPlaying, initUI } from './ui.js';
 import { initDebug } from './debug.js';
@@ -23,7 +25,7 @@ const speedLabel = document.getElementById('speed-label');
 const nextLabel = document.getElementById('next-label');
 let speedShown = -1, speedTimer = 0, audioTimer = 0;
 
-function rebuild() { palCache.clear(); buildSky(); drawInterior(); layers.forEach(l => l.cache.clear()); }
+function rebuild() { clearPal(); drawInterior(); layers.forEach(l => l.clear()); resetTone(); }
 
 /* 継ぎ目を自車の前台車・後台車、隣の車両の台車が順に踏む。踏む地点（走行距離）を state.hits に積み、
    その地点に届く少し前（HIT_LOOK 秒以内）になってから音と揺れを予約する。速度 0 でも割り算せず、停車後に古い予約が鳴らない */
@@ -73,6 +75,7 @@ function updateNextLabel() {
 }
 function render() {
   updateNextLabel();
+  syncTone(); // 窓の中央の時刻・天気を state に書く。瞬間移動などのときは、ここでトーンを即座に切り替える
   const { dist, t, bobs } = state;
   let bob = 0;
   while (bobs.length && bobs[0] + 0.07 < t) bobs.shift();
@@ -81,14 +84,22 @@ function render() {
   const cv = curve(dist + W / 2), el = elev(dist + W / 2), cant = half(cv * CANT);
   state.curve = cv; state.elev = el;
   const oy = SY + bob + cant;
-  const lay = (L, extra = 0) => L.render(cx, layerOff(L, dist) + extra, oy + half(L.drop * el), SY);
+  // 窓の外の景色はトーン（時間帯・天気の色調）つきで描く。切り替えのクロスフェード中は、いまのトーンの絵の上に次のトーンの絵を toneK の濃さで重ねる
+  // （層ごとに重ねるので、不透明なドットはちょうど2つの色の中間になる）。scene(fn) の fn(b) は b = false で今の、true で次のトーンの絵を描く
+  const fadeK = state.toneTo ? Math.min(1, state.toneK) : 0;
+  const scene = fn => { fn(false); if (fadeK > 0) { cx.globalAlpha = fadeK; fn(true); cx.globalAlpha = 1; } };
+  const toned = fn => scene(b => { const prev = setTone(b ? tones.b : tones.a); fn(); setTone(prev); }); // チャンクを通さず直接描く景色用
+  const lay = L => scene(b => L.render(cx, viewOff(L), oy + half(L.drop * el), SY, b));
   cx.setTransform(SUB, 0, 0, SUB, 0, -VY * SUB);
   const dark = tunnelCovers(dist); // 画面全体がトンネルの壁に隠れているあいだは、奥の景色を描かない
   if (!dark) {
-  cx.drawImage(sky, 0, SY);
-  lay(clouds, t * 1.2);
-  lay(far); lay(mid); lay(near); lay(track);
+  scene(b => cx.drawImage(b ? skyB : sky, 0, SY));
+  // 雨脚と舞う雪は、層の間に3段で差し込む（奥は細かく、手前は長く速い。トンネルの壁・ホーム・トラスには隠れる）
+  const fall = band => { if (state.wx.rain > 0 || state.wx.snow > 0) toned(() => drawFall(cx, band)); };
+  lay(clouds);
+  lay(far); fall(0); lay(mid); lay(near); fall(1); lay(track);
   // 架線と架線柱（隣の線路）
+  toned(() => {
   const SPAN = 480, wx = Math.floor(dist * 1.2), dr = 96, dro = 48, wy = 13, my0 = 5, sag = 6;
   cx.fillStyle = P('#3d4442');
   cx.fillRect(0, oy + wy, W, 1);
@@ -104,6 +115,8 @@ function render() {
     R(cx, sx, py, 4, ph, '#4b5350'); R(cx, sx, py, 1, ph, '#75807c');
     R(cx, sx - 12, SY + 3 + cant, 30, 2, '#4b5350');
   }
+  });
+  fall(2);
   }
   // 駅のホーム（架線より手前）。駅の近くでだけ描く
   if (stationNear(dist + W / 2, 160)) lay(plat);
@@ -120,11 +133,15 @@ function render() {
       cx.fillRect(196 + s, y, 9, 1); cx.fillRect(212 + s, y, 3, 1);
     }
     cx.globalAlpha = 1;
-    tunnelGlass(cx, dist); // トンネルの中: 暗い窓に車内がうっすら映る
+    // トンネルの中と夜: 暗い窓に車内がうっすら映る。夜の度合いはトーンの外光の強さ sun から（切り替えの途中は間を取る）
+    const dk = t => t ? 1 - t.sun : 0, nightK = dk(tones.a) + (state.toneTo ? (dk(tones.b) - dk(tones.a)) * fadeK : 0);
+    tunnelGlass(cx, dist, nightK * nightK);
   }
-  // ドア: 開いた分だけ、景色の層の上下にホームの続きを描き足してから扉を重ねる
+  // 雨: 窓ガラスの水滴と流れる筋（ガラスの面。車内と乗客はこの後に重ねるので、窓の開口部の中にだけ見える）
   const dsh = state.phase === 'stop' ? doorShift(state.door) : 0;
-  if (dsh > 0) { drawDoorBackdrop(cx, state.station, 0, dsh); drawDoorBackdrop(cx, state.station, W - dsh, dsh); }
+  drawGlassRain(cx, dsh > 0);
+  // ドア: 開いた分だけ、景色の層の上下にホームの続きを描き足してから扉を重ねる
+  if (dsh > 0) toned(() => { drawDoorBackdrop(cx, state.station, 0, dsh); drawDoorBackdrop(cx, state.station, W - dsh, dsh); });
   drawDoors(cx, dsh / DOOR_W);
   cx.drawImage(interior, 0, 0);
   drawPassengers(cx, t);
@@ -133,7 +150,7 @@ function render() {
 function frame(now) {
   const dt = Math.min(0.05, (now - state.last) / 1000); state.last = now;
   // 早送り（デバッグ用）は dt を大きくせず、同じ dt の update() を rate 回くり返す（停車・発車の判定や継ぎ目の予約を崩さない）
-  if (state.playing) { for (let i = 0; i < state.rate; i++) update(dt); render(); }
+  if (state.playing) { for (let i = 0; i < state.rate; i++) update(dt); stepTone(dt); render(); }
   if (debugTick) debugTick(now);
   requestAnimationFrame(frame);
 }

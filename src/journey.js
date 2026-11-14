@@ -85,6 +85,7 @@ function toBrake(st, s) {
 /* 地点 d の状態に置き直す（路線の切り替え、撮影での瞬間移動）。stopT を渡すと、駅の pos ちょうどなら停車中のその時刻にする */
 export function seekJourney(d, stopT = 0) {
   seek(d, stopT);
+  state.toneSnap = true;   // 時間帯・天気のトーンは、飛んだ先のものへフェードせずに切り替える（tone.js）
   state.lean = leanGoal(); // つり革の傾きは落ち着いた値にそろえる（同じ地点へ飛べば同じ状態）
 }
 function seek(d, stopT) {

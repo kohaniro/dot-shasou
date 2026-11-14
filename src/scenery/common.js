@@ -1,5 +1,6 @@
 import { ri, pick } from '../rng.js';
-import { R, mix, shade, tint, ell, HAZE, GREENS, TORII } from '../palette.js';
+import { R, RE, mix, shade, tint, ell, HAZE, GREENS, TORII } from '../palette.js';
+import { glow, halo, LAMPS } from '../lights.js';
 
 /* ---------- どのバイオームでも使う部品 ---------- */
 /* 遠くのものほど空気の色に寄せる */
@@ -20,6 +21,12 @@ export function bush(g, r, x, b) {
 export function utilityPole(g, x, b) {
   R(g, x, b - 19, 1, 19, '#5a5650'); R(g, x - 2, b - 18, 5, 1, '#5a5650'); R(g, x - 2, b - 15, 5, 1, '#5a5650');
   R(g, x + 1, b - 12, 2, 3, '#8a8f8f');
+  const v = glow(x, b, 0.6, 0.3); // 夜: 街灯のついた電柱。灯具と、足もとへ落ちる光
+  if (v >= 0) {
+    const c = LAMPS.street[Math.floor(v * LAMPS.street.length)];
+    RE(g, x - 3, b - 14, 3, 1, c); halo(g, x - 4, b - 15, 5, 3, c, 0.22);
+    halo(g, x - 3, b - 13, 3, 1, c, 0.12); halo(g, x - 6, b, 9, 2, c, 0.13); halo(g, x - 4, b, 5, 1, c, 0.16);
+  }
 }
 /* 中景の木（小さく、かすませる） */
 export function midTree(g, r, x, b) {

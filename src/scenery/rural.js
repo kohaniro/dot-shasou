@@ -3,6 +3,7 @@ import { ri, pick, vnoise } from '../rng.js';
 import { R, shade, tint, ink, ell, GREENS, HOUSE_WALL, ROOF, WIN_D, WATER, RICE, AZE, SOIL, GRASS, HILL_BACK, HILL_FRONT, VINYL, VINYL_RIB } from '../palette.js';
 import { env } from '../layers.js';
 import { hz, tree, midTree, torii } from './common.js';
+import { win, lamp } from '../lights.js';
 
 /* ---------- 田園: 田んぼ、農家、小屋、ビニールハウス、鎮守の森、山並み ---------- */
 
@@ -61,7 +62,7 @@ export function midFarm(g, r, x, b) { // 農家と屋敷林
   const w = ri(r, 11, 15), c = hz(pick(r, HOUSE_WALL)), rc = hz(pick(r, ROOF), 0.4), left = r() < 0.5;
   midTree(g, r, left ? x : x + w + 1, b); midTree(g, r, left ? x + 3 : x + w + 4, b);
   const hx = left ? x + 6 : x;
-  R(g, hx + 1, b - 3, w - 2, 3, c); R(g, hx + 3, b - 2, w - 7, 1, hz(WIN_D));
+  R(g, hx + 1, b - 3, w - 2, 3, c); R(g, hx + 3, b - 2, w - 7, 1, hz(WIN_D)); lamp(g, hx + 3, b - 2, 3, 1, 'mid', 0.65);
   R(g, hx, b - 4, w, 1, shade(rc, 0.15)); R(g, hx + 1, b - 5, w - 2, 1, rc); R(g, hx + 2, b - 6, w - 4, 1, tint(rc, 0.2));
   return w + 12;
 }
@@ -91,12 +92,13 @@ export function midPylon(g, x, b) { // 送電鉄塔
   const c = hz('#6f7a80', 0.35), h = 21;
   R(g, x + 3, b - h, 1, h - 5, c); R(g, x + 2, b - 5, 1, 3, c); R(g, x + 4, b - 5, 1, 3, c); R(g, x + 1, b - 2, 1, 2, c); R(g, x + 5, b - 2, 1, 2, c);
   R(g, x, b - h + 2, 7, 1, c); R(g, x + 1, b - h + 6, 5, 1, c); R(g, x, b - h + 10, 7, 1, c);
+  lamp(g, x + 3, b - h, 1, 1, 'red', 1, 0.3); // 航空障害灯
   return 9;
 }
 
 /* ---------- 近景 ---------- */
 function engawa(g, x, y, w, h) { // 縁側のガラス戸
-  R(g, x, y, w, h, WIN_D);
+  win(g, x, y, w, h, WIN_D, 'home', 0.6); // 夜: 障子ごしの明かり
   for (let xx = x + 3; xx < x + w; xx += 4) R(g, xx, y, 1, h, '#cfcabd');
 }
 export function bFarm(g, r, x, b, w) { // 農家: 大きな寄棟屋根、縁側、背後に屋敷林

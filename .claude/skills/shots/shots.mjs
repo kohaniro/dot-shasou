@@ -1,6 +1,9 @@
 // 指定シード・絵柄で、各バイオームの中心と遷移の途中の景色を PNG に保存する（ヘッドレス Chrome を CDP で操作。依存なし）
 // 使い方: node shots.mjs <outDir> <seed,seed> <style,style> [mode]
 //   mode: both（既定） | raw | view | run | perf | pano:<距離,距離> | at:<距離,距離> | zoom:<距離,距離> | station[:<k,k>] | door[:<k,k>] | journey[:<秒>] | pass | walk | swap[:<k,k>] | feat | tunnel[:<k,k>] | bridge[:<k,k>]
+//         | course | curve[:<k,k>] | elev[:<k,k>] | clock | tod[:<距離,距離>] | wx[:<距離,距離>] | tonerun[:<秒>]
+//   時間帯・天気は、既定では昼・晴に固定して撮る。環境変数 SHOTS_TOD=auto|dawn|noon|dusk|night|<時刻> と SHOTS_WX=auto|clear|cloud|rain|snow で変える（auto = 走行距離から決まる値。cloud:0.5 のように強さも付けられる）
+//   SHOTS_WXS=clear,cloud:0.5,cloud,rain:0.5,rain のように並べると、wx mode がその段階を順に撮る
 // 時間と Math.random を差し替えて固定ステップで進めるので、同じ引数なら同じ絵になる。各ケースを2回描いて一致も確かめる。
 import fs from 'node:fs';
 import os from 'node:os';
@@ -13,6 +16,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const [outArg = path.join(os.tmpdir(), 'dot-shasou-shots'), seedArg = '1234', styleArg = 'real', mode = 'both'] = process.argv.slice(2);
 const OUT = path.resolve(outArg); fs.mkdirSync(OUT, { recursive: true });
 const BASE = 'http://localhost:8000', DPORT = 9334;
+const TOD_ENV = process.env.SHOTS_TOD || 'noon', WX_ENV = process.env.SHOTS_WX || 'clear';
+if (!/^(auto|dawn|noon|dusk|night|\d+(\.\d+)?)$/.test(TOD_ENV) || !/^(auto|clear|(cloud|rain|snow)(:\d+(\.\d+)?)?)$/.test(WX_ENV)) { console.error('SHOTS_TOD は auto|dawn|noon|dusk|night|<時刻>、SHOTS_WX は auto|clear|cloud|rain|snow（cloud:0.5 のように強さ 0〜1 を付けられる）'); process.exit(1); }
 const CHROME = [process.env.CHROME_PATH, 'C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', 'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium'].find(p => p && fs.existsSync(p));
@@ -60,7 +65,7 @@ const stub = (ls) => `(() => {
   localStorage.clear(); for (const k in ls) localStorage.setItem(k, ls[k]);
   window.__step = (n, ms) => { for (let i = 0; i < n; i++) { now += ms; const c = q.splice(0); for (const f of c) f(now); } return q.length; };
   window.__mods = async () => {
-    if (!window.__m) window.__m = { st: await import('/src/state.js'), w: await import('/src/world.js'), sc: await import('/src/scenery/index.js'), sky: await import('/src/scenery/sky.js'), j: await import('/src/journey.js'), sn: await import('/src/stations.js'), ft: await import('/src/features.js'), co: await import('/src/course.js'), ly: await import('/src/layers.js') };
+    if (!window.__m) window.__m = { st: await import('/src/state.js'), w: await import('/src/world.js'), sc: await import('/src/scenery/index.js'), sky: await import('/src/scenery/sky.js'), j: await import('/src/journey.js'), sn: await import('/src/stations.js'), ck: await import('/src/clock.js'), tn: await import('/src/tone.js'), ft: await import('/src/features.js'), co: await import('/src/course.js'), ly: await import('/src/layers.js') };
     return window.__m;
   };
   // 最初の1周について、各バイオームの中心と遷移の中間の距離を求める
@@ -82,7 +87,8 @@ const stub = (ls) => `(() => {
   // トンネル・橋の「架線より手前に重ねる層」も Layer として layers に足せば（render() の重ね順と同じ位置に）、ここは直さなくてもこの絵に入る。
   // Layer でない描き方（render() の中で毎フレーム直接描く）にする場合は、下のループの後に同じ描画を足すこと
   window.__raw = async (dist, wd, sc) => {
-    const { sc: S, sky, st, co, ly } = await window.__mods(); const el = co.elev(dist + 160);
+    const { sc: S, sky, st, co, ly, tn } = await window.__mods(); const el = co.elev(dist + 160);
+    tn.snapToneAt(dist); // この地点の時間帯・天気のトーンで描く（画面の地点のトーンへは、次の描画で戻る）
     const c = document.createElement('canvas'); c.width = wd * sc; c.height = 80 * sc; const g = c.getContext('2d'); g.imageSmoothingEnabled = false; g.scale(sc, sc);
     for (let x = 0; x < wd; x += 320) g.drawImage(sky.sky, x, 0);
     for (const L of S.layers) {
@@ -209,6 +215,70 @@ const stub = (ls) => `(() => {
     return { ev, log, maxAcc: +maxAcc.toFixed(2), maxDec: +maxDec.toFixed(2), maxAccJumpPerStep: +maxJump.toFixed(2), crawlSecs: +crawl.toFixed(2),
       stations: [1, 2, 3, 4].map(k => { const s = sn.stationAt(k); return k + ':' + s.name + '(' + s.kana + ') pos=' + s.pos + ' size=' + s.size.toFixed(2) + ' len=' + s.len + ' x0=' + s.x0 + ' x1=' + s.x1; }) };
   };
+  // 時間帯・天気の固定（tod: 'auto' | 'dawn' | 'noon' | 'dusk' | 'night' | 時刻、wx: 'auto' | 'clear' | 'cloud' | 'rain' | 'snow'）。すぐ効く
+  window.__fix = async (tod, wx) => {
+    const { st, ck, tn } = await window.__mods();
+    if (tod !== undefined) st.state.todFix = tod === 'auto' ? null : tod in ck.TOD ? ck.TOD[tod] : Number(tod);
+    if (wx !== undefined) st.state.wxFix = wx === 'auto' ? null : wx;
+    tn.snapToneAt(st.state.dist); // チャンクを直接作る mode（perf など）でも、すぐこのトーンで描かれるように
+  };
+  // 時刻・天気の一覧と検証（d = 0〜dMax。固定は外して見る）
+  window.__clock = async (dMax) => {
+    const { st, ck, tn } = await window.__mods(); const S = st.state, keep = [S.todFix, S.wxFix]; S.todFix = null; S.wxFix = null;
+    const hm = h => { const m = Math.floor(h * 60 + 1e-6); return String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+    const tl = h => h >= ck.DAWN[1] && h < ck.DUSK[0] ? '昼' : h >= ck.DUSK[0] && h < ck.DUSK[1] ? '夕' : h >= ck.DAWN[0] && h < ck.DAWN[1] ? '朝' : '夜';
+    const wl = w => w.snow > 0.5 ? '雪' : w.rain > 0.5 ? '雨' : w.cloud > 0.5 ? '曇' : '晴';
+    const table = []; let line = [];
+    for (let d = 0; d <= dMax; d += 10000) { const h = ck.timeAt(d); line.push(String(d / 1000).padStart(3) + 'k ' + hm(h) + tl(h) + wl(ck.weatherAt(d))); if (line.length === 8) { table.push(line.join('  ')); line = []; } }
+    if (line.length) table.push(line.join('  '));
+    const spans = [], tshare = {}, wshare = {}, wruns = []; let cur = null, s0 = 0, wcur = null, w0 = 0, bad = 0, both = 0, maxStep = 0, pw = null, direct = 0;
+    for (let d = 0; d <= dMax; d += 20) {
+      const h = ck.timeAt(d), w = ck.weatherAt(d), a = tl(h), b = wl(w);
+      if (a !== cur) { if (cur) spans.push(cur + ' ' + s0 + '〜' + d + '（' + (d - s0) + '）'); cur = a; s0 = d; }
+      if (b !== wcur) { if (wcur) { wruns.push(wcur + ' ' + w0 + '〜' + d + '（' + (d - w0) + '）'); if (wcur !== '曇' && b !== '曇') direct++; } wcur = b; w0 = d; }
+      tshare[a] = (tshare[a] || 0) + 20; wshare[b] = (wshare[b] || 0) + 20;
+      if ((w.rain > 0 || w.snow > 0) && w.cloud < 1) bad++;
+      if (w.rain > 0 && w.snow > 0) both++;
+      if (pw) maxStep = Math.max(maxStep, Math.abs(w.cloud - pw.cloud), Math.abs(w.rain - pw.rain), Math.abs(w.snow - pw.snow)); pw = w;
+    }
+    spans.push(cur + ' ' + s0 + '〜（途中）'); wruns.push(wcur + ' ' + w0 + '〜（途中）');
+    const segs = []; for (let k = ck.wxSeg(0); ck.wxEdge(k) <= dMax; k++) segs.push(ck.wxKind(k) + '@' + ck.wxEdge(k));
+    // トーンの段階が切り替わる地点
+    const sw = []; let key = tn.toneAt(0).key, last = 0, minGap = Infinity, minAt = '';
+    for (let d = 5; d <= dMax; d += 5) { const k = tn.toneAt(d).key; if (k !== key) { if (sw.length && d - last < minGap) { minGap = d - last; minAt = last + '〜' + d + '（→ ' + key + ' → ' + k + '）'; } sw.push(d + ':' + k); key = k; last = d; } }
+    const pct = o => Object.keys(o).map(k => k + ' ' + (100 * o[k] / (dMax + 20)).toFixed(1) + '%').join('  ');
+    [S.todFix, S.wxFix] = keep;
+    return { start: hm(ck.rawTimeAt(0)), table, spans, wruns, segs, tshare: pct(tshare), wshare: pct(wshare), bad, both, direct, maxStep, nsw: sw.length, minGap, minAt, sw };
+  };
+  // 同じ地点を、時間帯（kind = 'tod'）か天気（'wx'）を替えて撮る。車内込みの画面と景色だけの絵
+  window.__toneShot = async (kind, vals, dist) => {
+    const { st } = await window.__mods(); const S = st.state, keep = [S.todFix, S.wxFix], views = [], raws = [], info = [];
+    for (const v of vals) {
+      await (kind === 'tod' ? window.__fix(v) : window.__fix(undefined, v));
+      await window.__goto(dist); views.push(window.__view()); raws.push(await window.__raw(S.dist, 480, 2));
+      info.push(v + ' dist=' + S.dist.toFixed(1) + ' hour=' + S.hour.toFixed(2) + ' wx=' + JSON.stringify(S.wx) + ' tone=' + S.tone.key + (S.tone.id ? '（昼・晴 = 色を変えない）' : ''));
+    }
+    [S.todFix, S.wxFix] = keep; S.toneSnap = true;
+    return { views, raws, info };
+  };
+  // トーンの切り替え（準備 → クロスフェード → 入れ替え）を実ループで確かめる: 固定を外し、最初の夕方の手前から 16ms 刻みで secs 秒進める
+  window.__toneRun = async (secs) => {
+    const { st, ck, j } = await window.__mods(); const S = st.state; S.todFix = null; S.wxFix = null;
+    const start = ck.nextTimePoint(0, ck.DUSK[0]) - 160 - 400, hm = h => Math.floor(h) + ':' + String(Math.floor(h % 1 * 60)).padStart(2, '0');
+    j.jumpTo(start); window.__step(2, 16);
+    const ev = [], views = [], n = Math.round(secs / 0.016); let key = S.tone.key, to = null, fades = 0, swaps = 0, maxMs = 0, mid = false, slow = 0;
+    for (let i = 0; i < n; i++) {
+      const a = Date.now(); window.__step(1, 16); const ms = Date.now() - a; maxMs = Math.max(maxMs, ms); if (ms > 16) slow++;
+      const k2 = S.tone.key, to2 = S.toneTo ? S.toneTo.key : null;
+      if (to2 && to2 !== to) { fades++; ev.push('t=' + (i * 0.016).toFixed(1) + ' d=' + Math.round(S.dist) + ' ' + hm(S.hour) + ' fade ' + k2 + '→' + to2); }
+      if (k2 !== key) { swaps++; key = k2; }
+      to = to2;
+      if (to2 && !mid && fades >= 9 && S.toneK > 0.45 && S.toneK < 0.56) { mid = true; views.push(window.__view()); ev.push('  （↑ のフェード ' + S.toneK.toFixed(2) + ' の画面を撮影）'); }
+      else if (i % Math.round(n / 4) === Math.round(n / 8)) views.push(window.__view());
+    }
+    views.push(window.__view());
+    return { start, ev, fades, swaps, maxMs, slow, frames: n, views, end: 'dist=' + Math.round(S.dist) + ' ' + hm(S.hour) + ' tone=' + S.tone.key + ' phase=' + S.phase };
+  };
   window.__view = () => document.getElementById('view').toDataURL('image/png');
   // 画面のうち座席まわり（内部座標 y=76〜150、幅320）を3倍に拡大した絵
   window.__seat = () => {
@@ -269,6 +339,7 @@ async function load(seed, style, passMode = 'on') {
   await pg.send('Page.navigate', { url: `${BASE}/index.html#line-${seed}` });
   for (let i = 0; i < 100 && !pg.events.includes('Page.loadEventFired'); i++) await sleep(50);
   await sleep(300);
+  await pg.ev(`__fix(${JSON.stringify(TOD_ENV)}, ${JSON.stringify(WX_ENV)})`); // 時間帯・天気の固定（既定は昼・晴）。次の描画から効く
   return pg;
 }
 const save = (name, url) => { const b = Buffer.from(url.split(',')[1], 'base64'); fs.writeFileSync(path.join(OUT, name), b); return crypto.createHash('sha256').update(b).digest('hex').slice(0, 12); };
@@ -323,7 +394,7 @@ for (const seed of seedArg.split(',')) for (const style of styleArg.split(',')) 
       const dist = await pg.ev('(async () => Math.round((await __mods()).st.state.dist))()');
       h.push(save(`run-${seed}-${style}.png`, await pg.ev(`__sheet(${JSON.stringify(urls)})`)) + ' dist=' + dist);
     } else if (mode === 'perf') { // チャンク生成の所要時間（Date.now は差し替えていない）
-      console.log('  perf ' + await pg.ev(`(async () => { const { sc } = await __mods(); const out = []; for (const L of sc.layers) { let mx = 0; const t0 = Date.now(); let n = 0; for (let i = -2; i < 400; i++) { L.cache.clear(); const a = Date.now(); L.chunk(i); mx = Math.max(mx, Date.now() - a); n++; } out.push('layer' + L.id + ' mean=' + ((Date.now() - t0) / n).toFixed(2) + 'ms max=' + mx + 'ms'); } return out.join(' | '); })()`));
+      console.log('  perf ' + await pg.ev(`(async () => { const { sc } = await __mods(); const out = []; for (const L of sc.layers) { let mx = 0; const t0 = Date.now(); let n = 0; for (let i = -2; i < 400; i++) { L.clear(); const a = Date.now(); L.chunk(i); mx = Math.max(mx, Date.now() - a); n++; } out.push('layer' + L.id + ' mean=' + ((Date.now() - t0) / n).toFixed(2) + 'ms max=' + mx + 'ms'); } return out.join(' | '); })()`));
     } else if (mode === 'station' || mode.startsWith('station:')) { // 駅ごとに 進入中 / 停車・ドア全開 / 発車直後 の3コマ
       const ks = mode.startsWith('station:') ? mode.slice(8).split(',').map(Number) : [1, 2];
       for (const k of ks) {
@@ -345,6 +416,27 @@ for (const seed of seedArg.split(',')) for (const style of styleArg.split(',')) 
         h.push(save(`${type}-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.views)})`)));
         h.push(save(`${type}-raw-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.raws)})`)));
       }
+    } else if (mode === 'clock') { // 時刻・天気の一覧と検証（画像なし）
+      const r = await pg.ev('__clock(450000)');
+      if (pass === 0) console.log(['', `出発 ${r.start}（10000 ドットごとの 時刻・時間帯・天気）`, ...r.table, '時間帯: ' + r.spans.join(' / '), '  割合: ' + r.tshare,
+        '天気の区間: ' + r.segs.join(' '), '天気（0.5 で区切った見かけ）: ' + r.wruns.join(' / '), '  割合: ' + r.wshare,
+        `検証: 雨・雪なのに cloud < 1 の地点 ${r.bad} ／ 雨と雪が同時 ${r.both} ／ 曇りを通らない切り替わり ${r.direct} ／ 20 ドットあたりの変化の最大 ${r.maxStep.toFixed(4)}`,
+        `トーンの切り替え: ${r.nsw} 回  最小間隔 ${r.minGap} ドット ${r.minAt}`, '  最初の 30 回: ' + r.sw.slice(0, 30).join(' ')].join('\n  ').slice(1));
+      h.push(crypto.createHash('sha256').update(r.table.join(';') + r.sw.join(';')).digest('hex').slice(0, 12));
+    } else if (/^(tod|wx)(:|$)/.test(mode)) { // 同じ地点を 朝焼け / 昼 / 夕焼け / 夜、または 晴 / 曇 / 雨 / 雪 で
+      const [kind, arg] = mode.split(':'), ds = arg ? arg.split(',').map(Number) : [(plan.find(p => p[0] === 'suburb') || plan[0])[1]];
+      const vals = kind === 'tod' ? (process.env.SHOTS_HOURS ? process.env.SHOTS_HOURS.split(',') : ['dawn', 'noon', 'dusk', 'night']) : (process.env.SHOTS_WXS ? process.env.SHOTS_WXS.split(',') : ['clear', 'cloud', 'rain', 'snow']), views = [], raws = [];
+      for (const d of ds) {
+        const r = await pg.ev(`__toneShot('${kind}', ${JSON.stringify(vals)}, ${d})`);
+        if (pass === 0) console.log(`  ${kind} @${d}\n    ` + r.info.join('\n    '));
+        views.push(...r.views); raws.push(...r.raws);
+      }
+      h.push(save(`${kind}-${seed}-${style}.png`, await pg.ev(`__sheet(${JSON.stringify(views)})`)));
+      h.push(save(`${kind}-raw-${seed}-${style}.png`, await pg.ev(`__sheet(${JSON.stringify(raws)})`)));
+    } else if (/^tonerun(:|$)/.test(mode)) { // トーンの切り替えを実ループで（最初の夕方）
+      const r = await pg.ev(`__toneRun(${mode.includes(':') ? Number(mode.split(':')[1]) : 100})`);
+      if (pass === 0) console.log([`  tonerun: start dist=${Math.round(r.start)}  fades=${r.fades} swaps=${r.swaps}  frames=${r.frames} max frame ${r.maxMs}ms（16ms 超 ${r.slow} 回）  end ${r.end}`, ...r.ev].join('\n    '));
+      h.push(save(`tonerun-${seed}-${style}.png`, await pg.ev(`__sheet(${JSON.stringify(r.views)})`)) + ' fades=' + r.fades + ' swaps=' + r.swaps);
     } else if (mode === 'course') { // 線形の一覧と検証（画像なし）
       const r = await pg.ev('__course(200000)');
       if (pass === 0) console.log(['', ...r.rows, r.sum, r.run, 'violations: ' + (r.bad.length ? r.bad.join(' / ') : 'none')].join('\n  ').slice(1));

@@ -10,7 +10,7 @@ const lineLabel = document.getElementById('line-label');
 export function setSeed(n) {
   state.seed = n >>> 0;
   jumpTo(0); // 進行を出発地点（最初の駅へ向かって巡航中）に置き直す。state.dist = 0、継ぎ目の予約の破棄もここで
-  layers.forEach(l => l.cache.clear());
+  layers.forEach(l => l.clear());
   genPassengers();
   lineLabel.textContent = '路線 ' + String(state.seed).padStart(4, '0');
 }

@@ -1,10 +1,11 @@
 import { W, SH, state } from '../state.js';
 import { hash32, rng, ri, pick } from '../rng.js';
-import { R, shade, tint, mix, HAZE, GRASS, PATH, CONC, GRAVEL, SIGN, RIVER, GLINT, LEVEE, REED, DIRT, REVET, REVET_D, TRUSS_PAINT, SPAN_PAINT } from '../palette.js';
+import { R, RE, shade, tint, mix, HAZE, GRASS, PATH, CONC, GRAVEL, SIGN, RIVER, GLINT, LEVEE, REED, DIRT, REVET, REVET_D, TRUSS_PAINT, SPAN_PAINT } from '../palette.js';
 import { world } from '../world.js';
 import { distAt, layerX } from '../layers.js';
 import { featuresIn, featureNear } from '../features.js';
 import { hz, tree, bush, midTree } from './common.js';
+import { litNow, halo } from '../lights.js';
 
 /* ---------- トラス橋と川 ----------
    橋の位置は features.js の区間 { type: 'bridge', a, b, len, h }（線路際の走行距離）。絵は橋ごとの「計画」
@@ -187,17 +188,19 @@ const ITEM = {
     if (!it.small) { T(x + 4, y - 3, 2, 3, '#3f5f7f'); T(x + 4, y - 4, 2, 1, '#e3b58f'); T(x + 3, y - 5, 4, 1, '#d8cfa8'); T(x + 6, y - 3, 3, 1, '#4b3a2f'); }
     else T(x + 2, y - 1, 1, 1, '#3f5f7f');
   },
-  yakata(T, it, p) { // 屋形船
+  yakata(T, it, p, g, ox, cw) { // 屋形船
     const { x, y } = it;
     T(x, y, 24, 1, '#3d3a36'); T(x + 2, y + 1, 20, 1, '#2a2826'); T(x + 2, y + 2, 20, 1, shade(p.tone[3], 0.22));
     T(x + 4, y - 3, 16, 3, '#e6dcc0'); T(x + 3, y - 4, 18, 1, '#4a5560');
-    for (let k = 0; k < 5; k++) { T(x + 5 + 3 * k, y - 2, 2, 1, '#5b7389'); T(x + 5 + 3 * k, y - 1, 1, 1, '#c94f3f'); }
+    const TE = litNow() > 0.25 ? (lx, ly, w, h, c) => { if (lx + w > ox && lx < ox + cw) RE(g, lx - ox, ly, w, h, c); } : T; // 夜: 障子の明かりと、軒のちょうちん
+    for (let k = 0; k < 5; k++) { TE(x + 5 + 3 * k, y - 2, 2, 1, TE === T ? '#5b7389' : '#ffd98a'); TE(x + 5 + 3 * k, y - 1, 1, 1, TE === T ? '#c94f3f' : '#ff6a4a'); }
+    if (TE !== T && x + 24 > ox && x < ox + cw) halo(g, x + 3 - ox, y + 1, 18, 2, '#ffd98a', 0.22); // 水面への映り
   },
   planter(T, it) { // 護岸のテラスの植え込み
     T(it.x, 67, 7, 2, GRASS[1]); T(it.x + 1, 66, 5, 1, GRASS[1]); T(it.x + 1, 66, 2, 1, tint(GRASS[1], 0.25)); T(it.x, 69, 7, 1, REVET_D);
   },
-  girder(T, it, p, g, ox, cw) { spanBridge(T, it, p, ox, cw, false); },
-  arch(T, it, p, g, ox, cw) { spanBridge(T, it, p, ox, cw, true); },
+  girder(T, it, p, g, ox, cw) { spanBridge(T, it, p, ox, cw, false, g); },
+  arch(T, it, p, g, ox, cw) { spanBridge(T, it, p, ox, cw, true, g); },
   farspan(T, it) { // 遠景: ずっと先に架かる橋の細い線
     const c = hz('#6a767c', 0.4), w = it.x1 - it.x0, n = Math.max(2, Math.round(w / 9));
     T(it.x0, 51, w, 1, c);
@@ -205,7 +208,8 @@ const ITEM = {
   }
 };
 /* 中景: 川に並行して架かる道路橋（桁橋 / アーチ橋）。路面は堤防の天端の高さ */
-function spanBridge(T, it, p, ox, cw, arch) {
+function spanBridge(T, it, p, ox, cw, arch, g) {
+  const lit = litNow() > 0.25, TE = (x, y, w, h, c) => { if (x + w > ox && x < ox + cw) RE(g, x - ox, y, w, h, c); };
   const { x0, x1 } = it, w = x1 - x0, r = rng(it.seed), conc = hz(CONC, 0.2), dk = hz('#5c676c', 0.2), col = hz(it.t === 'arch' ? p.spanCol : '#8d979a', 0.06);
   const n = Math.max(1, Math.round(w / (arch ? 96 : 44))), px = k => x0 + Math.round(k * w / n);
   for (let k = 1; k < n; k++) { T(px(k), 57, 2, 4, conc); T(px(k) + 2, 57, 1, 4, shade(conc, 0.2)); T(px(k) - 1, 61, 4, 1, shade(p.tone[1], 0.16)); }
@@ -216,7 +220,8 @@ function spanBridge(T, it, p, ox, cw, arch) {
       T(gx, y, 1, yb - y, col);
       if ((gx - s0) % 6 === 3 && y < 53) T(gx, yb, 1, 55 - yb, mix(col, HAZE, 0.45));
     }
-  } else for (let k = 0; k <= n; k++) if (k % 2 === 1) { T(px(k) - 1, 51, 1, 4, dk); T(px(k) - 1, 51, 3, 1, dk); } // 街灯
+  } else for (let k = 0; k <= n; k++) if (k % 2 === 1) { T(px(k) - 1, 51, 1, 4, dk); T(px(k) - 1, 51, 3, 1, dk); if (lit) TE(px(k) + 1, 52, 1, 1, '#fff2c6'); } // 街灯（夜は灯る）
+  if (arch && lit) for (let k = 0; k <= n; k++) TE(px(k), 54, 1, 1, '#fff2c6');
   T(x0, 55, w, 1, arch ? col : hz('#c9cdc8', 0.14)); T(x0, 56, w, 1, dk);
   for (let k = ri(r, 2, 4); k > 0; k--) T(x0 + ri(r, 4, Math.max(4, w - 8)), 54, ri(r, 2, 3), 1, hz(pick(r, SIGN), 0.2)); // 車
 }

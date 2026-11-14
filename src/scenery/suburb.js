@@ -1,7 +1,8 @@
 import { SH } from '../state.js';
 import { ri, pick } from '../rng.js';
-import { R, shade, tint, ink, win, BODY_LIGHT, SIGN, HOUSE_WALL, ROOF, WIN_D, WIN_M, WIN_L, GREENS, SOIL, GRASS, AZE } from '../palette.js';
+import { R, RE, shade, tint, ink, BODY_LIGHT, SIGN, HOUSE_WALL, ROOF, WIN_D, WIN_M, WIN_L, GREENS, SOIL, GRASS, AZE } from '../palette.js';
 import { hz } from './common.js';
+import { win, lamp, glow, tend, litNow, halo, LAMPS } from '../lights.js';
 import { bMansion, bZakkyo } from './city.js';
 import { bShed, bGreenhouse } from './rural.js';
 
@@ -12,15 +13,19 @@ function bHouse(g, r, x, b, w) {
   R(g, x + 1, top, w - 2, h, c); R(g, x + w - 2, top, 1, h, shade(c, 0.2));
   for (let k = 0; k < rh; k++) R(g, x + (rh - 1 - k), top - rh + k, w - 2 * (rh - 1 - k), 1, k === 0 ? tint(rc, 0.25) : rc);
   R(g, x, top, w, 1, shade(rc, 0.3));
-  win(g, x + 3, top + 2, 3, 2, WIN_D); if (w > 13) win(g, x + w - 7, top + 2, 3, 2, WIN_M);
+  const p = tend(x, b) < 0.2 ? 0 : 0.6; // 夜: 5軒に1軒は留守か、もう寝ている
+  win(g, x + 3, top + 2, 3, 2, WIN_D, 'home', p * 0.8); if (w > 13) win(g, x + w - 7, top + 2, 3, 2, WIN_M, 'home', p * 0.7);
   if (r() < 0.5) R(g, x + 2, top + 5, Math.min(8, w - 5), 2, tint(c, 0.4));
-  R(g, x + 3, b - 4, 2, 4, '#5b4d47'); if (w > 12) win(g, x + w - 8, b - 4, 4, 2, WIN_D);
+  R(g, x + 3, b - 4, 2, 4, '#5b4d47'); if (w > 12) win(g, x + w - 8, b - 4, 4, 2, WIN_D, 'home', p);
+  if (p) lamp(g, x + 5, b - 5, 1, 1, 'street', 0.3, 0.5); // 玄関灯
   ink(g, x + 1, top, w - 2, h);
 }
 function bShop(g, r, x, b, w) {
   const c = pick(r, BODY_LIGHT), sc = pick(r, SIGN), h = ri(r, 8, 11), top = b - h, sg = 3;
-  R(g, x, top, w, h, c); R(g, x, top, w, sg, sc); R(g, x + 3, top + (sg >> 1), (w / 2) | 0, 1, tint(sc, 0.8));
-  R(g, x + 2, top + sg + 1, w - 4, h - sg - 2, WIN_L);
+  const open = glow(x, top, 0.75, 0.3) >= 0, S = open ? RE : R; // 夜: 開いている店は、看板と店先が明るい
+  R(g, x, top, w, h, c); S(g, x, top, w, sg, sc); S(g, x + 3, top + (sg >> 1), (w / 2) | 0, 1, tint(sc, 0.8));
+  S(g, x + 2, top + sg + 1, w - 4, h - sg - 2, open ? '#fff1c4' : WIN_L);
+  if (open) { RE(g, x + 2, b - 3, w - 4, 2, '#f2d9a0'); halo(g, x - 1, b, w + 2, 2, '#ffe9b0', 0.3); halo(g, x + 1, b + 2, w - 2, 1, '#ffe9b0', 0.14); } // 店の中の棚、店先にこぼれる明かり
   for (let xx = x + 6; xx < x + w - 3; xx += 6) R(g, xx, top + sg + 1, 1, h - sg - 2, c);
   R(g, x + ri(r, 2, Math.max(2, w - 7)), top - 2, 4, 2, '#aab1b3');
   R(g, x + w - 1, top, 1, h, shade(c, 0.25)); ink(g, x, top, w, h);
@@ -31,7 +36,10 @@ function bApart(g, r, x, b, w) { // 2階建てアパート: 外廊下に玄関�
   for (let f = 0; f < 2; f++) {
     const y = top + 1 + f * fl;
     R(g, x + 1, y, cw2, fl - 1, shade(c, 0.2)); // 廊下の奥まった壁
-    for (let xx = x + 2; xx + 5 <= x + cw2; xx += 6) { R(g, xx, y + 1, 2, fl - 2, dc); R(g, xx + 3, y + 1, 2, 2, r() < 0.2 ? WIN_L : WIN_D); }
+    for (let xx = x + 2; xx + 5 <= x + cw2; xx += 6) {
+      R(g, xx, y + 1, 2, fl - 2, dc); win(g, xx + 3, y + 1, 2, 2, r() < 0.2 ? WIN_L : WIN_D, 'home', 0.4);
+      if (lamp(g, xx, y, 2, 1, 'stair', 0.5, 0.35)) halo(g, xx - 1, y + 1, 4, 2, '#e2efe6', 0.25); // 外廊下の蛍光灯
+    }
     if (f === 0) R(g, x + 1, y + 3, cw2, 1, tint(c, 0.35)); // 2階の手すり
   }
   for (let k = 0; k < fl; k++) R(g, x + w - sw + (k * (sw - 1) / fl | 0), top + fl + 1 + k, 2, 1, '#7b8388'); // 外階段
@@ -64,7 +72,7 @@ export function midHouse(g, r, x, b, w) {
   const c = hz(pick(r, HOUSE_WALL)), rc = hz(pick(r, ROOF), 0.42), h = ri(r, 2, 3);
   R(g, x, b - h, w, h, c); R(g, x + w - 1, b - h, 1, h, shade(c, 0.15));
   R(g, x - 1, b - h - 1, w + 2, 1, rc); R(g, x, b - h - 2, w, 1, tint(rc, 0.2));
-  R(g, x + 2, b - h + 1, 1, 1, hz(WIN_D));
+  R(g, x + 2, b - h + 1, 1, 1, hz(WIN_D)); lamp(g, x + 2, b - h + 1, 1, 1, 'mid', 0.55);
 }
 
 /* ---------- 地面: x から幅 w を y0 から下まで塗る。far = 0 近景 / >0 中景（かすませる） ---------- */

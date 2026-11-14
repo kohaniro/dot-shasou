@@ -1,9 +1,10 @@
 import { SH, state } from '../state.js';
 import { ri, pick, vnoise, rng, hash32 } from '../rng.js';
-import { R, mix, shade, tint, ink, GREENS, GRASS, WIN_D, HILL_BACK } from '../palette.js';
+import { R, RE, mix, shade, tint, ink, GREENS, GRASS, WIN_D, HILL_BACK } from '../palette.js';
 import { world } from '../world.js';
 import { distAt } from '../layers.js';
 import { tunnelProx } from '../features.js';
+import { win, lamp, halo, litNow } from '../lights.js';
 import { hz, torii } from './common.js';
 
 /* ---------- 海沿い: 水平線、海面、岬、防波堤と灯台、漁港、松林、漁村、浜、護岸 ---------- */
@@ -177,7 +178,10 @@ export function seaFar(g, i, L, base) {
       R(g, x + k, base - hh + 1, 1, hh, c); R(g, x + k, base - hh + 1, 1, 1, cl);
       if (hh > ph) { ph = hh; px = x + k; }
     }
-    if (light && ph > 2) { R(g, px, base - ph - 2, 1, 3, '#f1f1ea'); R(g, px, base - ph - 3, 1, 1, '#5a626a'); } // 島の灯台
+    if (light && ph > 2) { // 島の灯台（夜は灯がともる）
+      R(g, px, base - ph - 2, 1, 3, '#f1f1ea'); R(g, px, base - ph - 3, 1, 1, '#5a626a');
+      if (lamp(g, px, base - ph - 2, 1, 1, 'shop', 1, 0.3)) { halo(g, px - 2, base - ph - 2, 5, 1, '#fff3c8', 0.3); halo(g, px - 1, base - ph - 3, 3, 3, '#fff3c8', 0.2); }
+    }
   }
   /* 沖を行く船 */
   for (let n = ri(r, 0, 3); n > 0; n--) {
@@ -188,16 +192,21 @@ export function seaFar(g, i, L, base) {
       R(g, x, y, w, 2, hc); R(g, x + 1, y + 2, w - 2, 1, hz('#8a3f38', 0.35));
       const bx = dir ? x + 1 : x + w - 4;
       R(g, bx, y - 3, 3, 3, hz('#eeeee6', 0.2)); R(g, bx + 1, y - 4, 1, 1, hz('#3f4f63', 0.3));
+      lamp(g, bx + 1, y - 3, 1, 1, 'far', 1, 0.4); lamp(g, dir ? x + w - 1 : x, y - 1, 1, 1, 'red', 1, 0.4, 1); // 夜: 船橋の灯と舷灯
       for (let k = dir ? x + 5 : x + 1; k < (dir ? x + w - 2 : x + w - 6); k += 2) R(g, k, y - 1 - (r() < 0.5 ? 1 : 0), 2, 2, hz(pick(r, ['#b5553f', '#3f6f9a', '#c9a23f', '#5f8a6a', '#8f8f8a']), 0.35));
     } else if (t < 0.45) { // フェリー
       const w = ri(r, 9, 12), x = ri(r, 2, cw - w - 2);
       if (!free(x, w, 1.9)) continue;
       R(g, x, y, w, 2, hz('#f1f1ea', 0.15)); R(g, x + 2, y - 1, w - 4, 1, hz('#f1f1ea', 0.15)); R(g, x, y + 1, w, 1, hz('#3f6f9a', 0.3));
       R(g, x + (w >> 1), y - 2, 1, 1, hz('#c9503f', 0.3));
+      if (litNow() > 0) for (let k = x + 2; k < x + w - 2; k += 2) lamp(g, k, y - 1, 1, 1, 'far', 0.9, 0.4); // 夜: 客室の窓の列
     } else { // 漁船: 白い点とマスト。2〜3隻が固まることもある
       let x = ri(r, 4, cw - 24);
       for (let m = ri(r, 1, 3); m > 0; m--) {
-        if (free(x, 4, 1.9)) { R(g, x, y, 4, 1, hz('#f1f1ea', 0.15)); R(g, x + (dir ? 1 : 2), y - 1, 1, 1, hz('#f1f1ea', 0.15)); R(g, x, y + 1, 4, 1, SEA_D[0]); }
+        if (free(x, 4, 1.9)) {
+          R(g, x, y, 4, 1, hz('#f1f1ea', 0.15)); R(g, x + (dir ? 1 : 2), y - 1, 1, 1, hz('#f1f1ea', 0.15)); R(g, x, y + 1, 4, 1, SEA_D[0]);
+          if (lamp(g, x + (dir ? 1 : 2), y - 1, 1, 1, 'shop', 0.85, 0.5)) { halo(g, x - 1, y - 1, 6, 1, '#fff3c8', 0.3); halo(g, x, y + 1, 4, 1, '#fff3c8', 0.3); } // 夜: 漁り火と、水面への映り
+        }
         x += ri(r, 6, 11);
       }
     }
@@ -247,12 +256,13 @@ function midBreakwater(g, r, x, y, w) { // 防波堤と灯台: 沖側に消波�
   R(g, x, y, w, 2, c); R(g, x, y, w, 1, tint(c, 0.3)); R(g, x, y + 2, w, 1, SEA_D[3]);
   const lx = left ? x + 2 : x + w - 4;
   R(g, lx - 1, y - 1, 4, 1, tint(c, 0.2)); R(g, lx, y - 7, 2, 6, red ? mh('#c9503f') : mh('#f1f1ea')); R(g, lx, y - 8, 2, 1, mh('#3f4a55')); R(g, lx, y - 5, 2, 1, red ? mh('#f1f1ea') : mh('#c9503f'));
+  if (litNow() > 0.25) { RE(g, lx, y - 7, 2, 1, red ? '#ff5646' : '#7dffb0'); halo(g, lx - 1, y - 8, 4, 3, red ? '#ff5646' : '#7dffb0', 0.3); } // 夜: 防波堤灯台の赤・緑の灯
 }
 function midShed(g, r, x, b, w) { // 漁村の家・倉庫
   const c = mh(pick(r, BOARD)), rc = hz(pick(r, TIN), 0.38), h = ri(r, 2, 4);
   R(g, x, b - h, w, h, c); R(g, x + w - 1, b - h, 1, h, shade(c, 0.15));
   R(g, x - 1, b - h - 1, w + 2, 1, rc); R(g, x, b - h - 2, w, 1, tint(rc, 0.2));
-  if (w > 5) R(g, x + 2, b - h + 1, 2, 1, hz(WIN_D));
+  if (w > 5) { R(g, x + 2, b - h + 1, 2, 1, hz(WIN_D)); lamp(g, x + 2, b - h + 1, 2, 1, 'mid', 0.45); }
 }
 function midPort(g, r, x, b, w, X) { // 漁港: 岸壁、倉庫、もやった船、突き出た防波堤
   const q = b + 4, c = mh(CONC);
@@ -269,7 +279,8 @@ export function seaMid(g, r, x, b, rem, e, L, i) {
   if (k.c >= 2) { // 陸
     const hh = headH(k, X);
     if (hh > 2) { // 岬の上: たまに灯台
-      if (hh > 12 && rem > 8 && r() < 0.025) { const t = b - headH(coast(L, i, x + 3), X + 3); R(g, x + 3, t - 7, 2, 7, mh('#f1f1ea')); R(g, x + 3, t - 8, 2, 1, mh('#3f4a55')); R(g, x + 2, t - 6, 4, 1, mh('#dcdcd2')); }
+      if (hh > 12 && rem > 8 && r() < 0.025) { const t = b - headH(coast(L, i, x + 3), X + 3); R(g, x + 3, t - 7, 2, 7, mh('#f1f1ea')); R(g, x + 3, t - 8, 2, 1, mh('#3f4a55')); R(g, x + 2, t - 6, 4, 1, mh('#dcdcd2'));
+        if (litNow() > 0.25) { RE(g, x + 3, t - 7, 2, 1, '#fff6d6'); halo(g, x - 3, t - 7, 14, 1, '#fff6d6', 0.35); halo(g, x + 1, t - 8, 6, 3, '#fff6d6', 0.25); } } // 夜: 岬の灯台の光
       return Math.min(ri(r, 8, 18), rem);
     }
     if (r() >= k.sea) return 0;
@@ -307,8 +318,8 @@ function fishHouse(g, r, x, b, w) { // 漁村の民家: 板壁に瓦かトタン
   const c = pick(r, BOARD), rc = pick(r, TIN), h = ri(r, 6, 7), rh = 4, top = b - h;
   R(g, x + 1, top, w - 2, h, c); R(g, x + w - 2, top, 1, h, shade(c, 0.2));
   for (let xx = x + 3; xx < x + w - 2; xx += 3) R(g, xx, top + 1, 1, h - 1, shade(c, 0.08));
-  R(g, x + 3, top + 2, 4, 2, WIN_D); R(g, x + 5, top + 2, 1, 2, tint(c, 0.3));
-  R(g, x + w - 7, b - 5, 3, 5, shade(c, 0.4)); if (w > 16) R(g, x + 9, top + 2, 3, 2, WIN_D);
+  win(g, x + 3, top + 2, 4, 2, WIN_D, 'home', 0.55); R(g, x + 5, top + 2, 1, 2, tint(c, 0.3));
+  R(g, x + w - 7, b - 5, 3, 5, shade(c, 0.4)); if (w > 16) win(g, x + 9, top + 2, 3, 2, WIN_D, 'home', 0.45);
   ink(g, x + 1, top, w - 2, h);
   for (let k = 0; k < rh; k++) { const s = (rh - 1 - k) * 2; R(g, x + s, top - rh + k + 1, w - 2 * s, 1, k === 0 ? tint(rc, 0.25) : rc); }
   R(g, x, top + 1, w, 1, shade(rc, 0.3));

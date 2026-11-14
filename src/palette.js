@@ -16,21 +16,71 @@ const MONO = ['#1f2b24', '#4a6650', '#8fae7c', '#d9e6b9'];
 function mono(c) { const l = lum(c); return MONO[l < 72 ? 0 : l < 128 ? 1 : l < 188 ? 2 : 3]; }
 function soft(c) { const l = Math.round(lum(c)).toString(16).padStart(2, '0'); return mix(mix(c, '#' + l + l + l, 0.3), '#fff6ea', 0.2); }
 export const STYLES = {
-  real: { pal: null, outline: false, glass: true },
-  game: { pal: nearest16, outline: true, glass: false },
-  mono: { pal: mono, outline: true, glass: false },
-  soft: { pal: soft, outline: false, glass: true }
-};
+  real: { pal: null, outline: false, glass: true, fade: true },
+  game: { pal: nearest16, outline: true, glass: false, fade: false },
+  mono: { pal: mono, outline: true, glass: false, fade: false },
+  soft: { pal: soft, outline: false, glass: true, fade: true }
+}; // fade: トーン（時間帯・天気）の切り替えをクロスフェードで見せるか（色数の少ない絵柄は中間色が出ないよう瞬時に切り替える）
 export let STYLE = STYLES.real;
 export function setStyle(name) { STYLE = STYLES[name] || STYLES.real; }
-export const palCache = new Map(), INK = '#1a1c2c';
-export function P(c) { if (!STYLE.pal) return c; let v = palCache.get(c); if (v === undefined) { v = STYLE.pal(c); palCache.set(c, v); } return v; }
-export function R(g, x, y, w, h, c) { if (w <= 0 || h <= 0) return; g.fillStyle = P(c); g.fillRect(x | 0, y | 0, w | 0, h | 0); }
-export function ink(g, x, top, w, h) { if (!STYLE.outline) return; R(g, x, top, 1, h, INK); R(g, x + w - 1, top, 1, h, INK); R(g, x, top, w, 1, INK); }
-/* 窓 */
-export function win(g, x, y, w, h, c) {
-  R(g, x, y, w, h, c);
+export const palCache = new Map(), INK = '#1a1c2c'; // palCache: トーン無し（昼・晴、車内、灯り）の「色 → 絵柄の色」
+
+/* ---------- トーン（時間帯・天気による景色の色調）: 絵柄の変換の前にかける ----------
+   トーンは外から渡すオブジェクト { key, id, fn }（作るのは tone.js）: key は段階ごとの文字列、fn(c) が色を変える。
+   id が真（昼・晴）のトーンと null は「トーン無し」で、色は今までどおり絵柄の変換だけを通る。
+   setTone() で「いま描く物にかけるトーン」を切り替える。窓の外の景色を描く間だけ設定し、終わったら戻すこと
+   （車内・乗客・つり革・扉・トンネルの中はトーン無しで描く）。変換結果はトーンの key ごとに覚える */
+/* 奥行きの区分（setTone の depth）: トーンの色変換は、遠い層ほど空の色になじませる。cloud は雲、lit は灯りに照らされた駅のホーム */
+export const AIR = { front: 0, near: 1, mid: 2, far: 3, cloud: 4, lit: 5 };
+const TONE_CACHES = 40;       // 覚えておく「トーン × 奥行き（× 地面かどうか）」の数（古いものから捨てる）
+const toneCaches = new Map(); // key/depth → Map（色 → トーンと絵柄を通した色）
+let TONE = null, DEPTH = 0, toneCache = null, GY = 0, groundCache = null;
+const cacheOf = key => {
+  let m = toneCaches.get(key);
+  if (!m) { toneCaches.set(key, m = new Map()); if (toneCaches.size > TONE_CACHES) toneCaches.delete(toneCaches.keys().next().value); }
+  return m;
+};
+/* いまのトーンを切り替え、前の状態を返す（戻すときは返り値をそのまま渡す）。depth は AIR の値（省略 = いちばん手前）。
+   地面の線（setGround）は、新しいトーンでは外れ、前の状態へ戻すときは一緒に戻る */
+export function setTone(tone, depth = 0) {
+  const prev = { prevTone: true, tone: TONE, depth: DEPTH, gy: GY };
+  let gy = 0;
+  if (tone && tone.prevTone) { depth = tone.depth; gy = tone.gy; tone = tone.tone; }
+  TONE = tone && !tone.id ? tone : null; DEPTH = depth;
+  if (TONE) toneCache = cacheOf(TONE.key + '/' + depth);
+  setGround(gy);
+  return prev;
 }
+/* 地面の線（天気の絵づくり用）: R() で y がこの値以上の矩形は「地面」とみなし、トーンの色変換に ground = true を渡す
+   （雪の積もった地面・雨に濡れた地面の色になる。tone.js）。0 で外す。layers.js が、雨・雪のトーンでチャンクを描く間だけ設定する。
+   直接 fillStyle = P() で描く所と、トーン無しの間は効かない。前の値を返す */
+export function setGround(y) {
+  const prev = GY; GY = TONE && y ? y : 0;
+  if (GY) groundCache = cacheOf(TONE.key + '/' + DEPTH + '/g');
+  return prev;
+}
+function PG(c) {
+  let v = groundCache.get(c);
+  if (v === undefined) { v = TONE.fn(c, DEPTH, true); if (STYLE.pal) v = STYLE.pal(v); groundCache.set(c, v); }
+  return v;
+}
+/* いまかかっているトーン（昼・晴とトーン無しは null）と奥行き */
+export const toneNow = () => TONE;
+export const depthNow = () => DEPTH;
+/* 絵柄を替えたとき: 覚えた色をすべて捨てる */
+export function clearPal() { palCache.clear(); toneCaches.clear(); if (TONE) toneCache = cacheOf(TONE.key + '/' + DEPTH); setGround(GY); }
+/* 灯りの色（夜の窓あかり・街灯・トンネルの照明など、自分で光るもの）: トーンをかけず、絵柄の変換だけ通す */
+export function E(c) { if (!STYLE.pal) return c; let v = palCache.get(c); if (v === undefined) { v = STYLE.pal(c); palCache.set(c, v); } return v; }
+export function P(c) {
+  if (!TONE) return E(c);
+  let v = toneCache.get(c);
+  if (v === undefined) { v = TONE.fn(c, DEPTH); if (STYLE.pal) v = STYLE.pal(v); toneCache.set(c, v); }
+  return v;
+}
+export function R(g, x, y, w, h, c) { if (w <= 0 || h <= 0) return; g.fillStyle = GY && y >= GY ? PG(c) : P(c); g.fillRect(x | 0, y | 0, w | 0, h | 0); }
+/* R() の灯り版（トーンをかけない） */
+export function RE(g, x, y, w, h, c) { if (w <= 0 || h <= 0) return; g.fillStyle = E(c); g.fillRect(x | 0, y | 0, w | 0, h | 0); }
+export function ink(g, x, top, w, h) { if (!STYLE.outline) return; R(g, x, top, 1, h, INK); R(g, x + w - 1, top, 1, h, INK); R(g, x, top, w, 1, INK); }
 export function ell(g, ex, ey, rx, ry, c) {
   for (let dy = -ry; dy <= ry; dy++) {
     const half = Math.round(rx * Math.sqrt(1 - (dy * dy) / (ry * ry + 0.5)));
