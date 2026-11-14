@@ -48,7 +48,7 @@ function serve() {
   server.on('error', e => { if (e.code === 'EADDRINUSE') { console.log(`ポート ${PORT} は使用中です: ${URL_}`); process.exit(0); } throw e; });
   server.listen(PORT, HOST, () => {
     fs.writeFileSync(PID_FILE, String(process.pid));
-    console.log(`ドット車窓: ${URL_} （基準の試作は ${URL_}prototype.html）`);
+    console.log(`ドット車窓: ${URL_}`);
   });
   const bye = () => { try { fs.unlinkSync(PID_FILE); } catch (e) {} process.exit(0); };
   process.on('SIGINT', bye); process.on('SIGTERM', bye);

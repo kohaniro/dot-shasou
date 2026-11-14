@@ -12,7 +12,7 @@ node .claude/skills/serve/serve.mjs --detach   # 裏で起動（すでに動い�
 node .claude/skills/serve/serve.mjs --stop     # 止める
 ```
 
-- URL: `http://localhost:8000/`（分割後の `index.html`）、`http://localhost:8000/prototype.html`（比較の基準）
+- URL: `http://localhost:8000/`（`index.html`）
 - 路線を固定するときは `http://localhost:8000/#line-1234`
 - キャッシュ無効（`Cache-Control: no-store`）なので、ファイルを直したらブラウザを再読み込みするだけで反映される
 - ポートを変えるときは環境変数 `SHASOU_PORT`

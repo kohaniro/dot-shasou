@@ -1,0 +1,69 @@
+# アーキテクチャ
+
+複数のファイルにまたがる仕組みのまとめ。触る領域の節だけ読めばよい。守るべき規則の要約は `CLAUDE.md` にある。
+
+## 状態とモジュールの依存
+
+- **モジュールの依存方向**: `state.js`（何も import しない。画面寸法の定数と共有の可変状態 `state`）← `rng.js` ← `world.js` / `palette.js` （`clock.js` は `world.js` の隣、`lights.js` は `palette.js` の次、`tone.js` は `scenery/index.js` の次、`weather.js` は `layers.js` の後）← `stations.js`（駅データ）← `features.js`（トンネル・橋の位置）← `course.js`（線形: カーブ・高架・制限速度）← `layers.js` ← `scenery/*` ← `scenery/index.js`（レイヤーの実体 `layers`）← `journey.js`（進行。`stations.js` と `audio.js` を使う。`audio.js` は `features.js` を使う）← `ui.js` ← `main.js`。循環 import を作らないこと。`ui.js` は `main.js` を import せず、`render` / `rebuild` は `initUI(render, rebuild)` で受け取る。
+- **共有状態の書き換え**: `seed`・`dist`・`t`・`speed` などは `state.xxx` として読み書きする。`STYLE`（`palette.js`）と音の状態（`audio.js`）は `export let` なので、外からは `setStyle()` / `setSoundOn()` / `setVolume()` 経由で変える。
+
+## 決定的生成
+
+- **決定的生成**: `hash32(a,b,c)` + `rng(seed)`（mulberry32）。景色はシード×チャンク番号から決定的に作るので、生成コードで `Math.random()` を使わないこと（新シードの選択と音のノイズ生成のみ例外）。既存の生成コードに手を入れるときは、乱数の呼び出し順・回数が変わると同じシードの景色が変わる点に注意。
+
+## 視差レイヤー
+
+- **視差レイヤー `Layer`**: 横 256 ドットのチャンクを生成してキャッシュし、視差係数でスクロール。雲 0.012 / 遠景 0.09 / 中景 0.28 / 近景 0.6 / 線路際 1.0 / 架線 1.2（架線だけ `main.js` の `render()` で毎フレーム直接描画）/ ホーム 1.5（駅の近くでだけ描く）/ トラス 1.6（橋の近くでだけ）/ トンネルの壁 1.7（トンネルの近くでだけ）。シード変更時は `setSeed()`（`ui.js`）、絵柄変更時は `rebuild()`（`main.js`）で全キャッシュを破棄する。
+
+## 線形（カーブ・高架・速度）
+
+- **線形**（`course.js`）: `features.js` と同じく d = 0 から走査して表を決定的に伸ばす。`heading(d)` は向きの積算（遠景のドット単位、±120 以内。カーブの区間だけ smoothstep で次の値へ移る）、`curve(d)` はその傾きを −1..1 にしたもの（正 = 窓がカーブの外側で遠景が速く流れる、負 = 内側）、`elev(d)` は 0 地上〜1 高架（都心・住宅街の重みが高い所。山間・海沿い・トンネル・橋の前後では 0。勾配は 0 < elev < 1）、`speedLimit(d)` は巡航の目標（バイオームの基準 × 駅間ごとの係数 × カーブの制限）。カーブは駅のホーム・橋・坑口の近くに置かない。引くのは `nextCurve` / `nextElev` / `elevSpan`。定数は冒頭の `CURVE` / `ELEV` / `SPEED` など。確認は `shots` の `course`（一覧と検証）/ `curve` / `elev` mode。
+- **カーブ・高架の見せ方**: 「距離 → レイヤー座標」は `layerX(L, d) = (d − W/2)·f + W/2 + L.pan·heading(d)`、`distAt` はその逆（`layers.js`）。pan は 雲 1 / 遠景 1 / 中景 0.55 / 近景 0.22 / ほか 0 なので、カーブでは奥の層ほど流れる速さが変わり、窓の中央では常に全レイヤーが同じ地点を指す。**遠・中・近景に距離で物を置くときは必ず `layerX` / `distAt` を通す**（式を直接書くとカーブの先でずれる）。描画のオフセットは `layerOff(L, dist)`。`render()` は窓の中央の `curve` / `elev` を `state.curve` / `state.elev` に書き、カーブでは窓の外の全部を `curve × CANT(2)` ドット上下させ、高架では層を `elev × drop`（遠景 2 / 中景 6 / 近景 13）だけ下げる（上のすき間はチャンクの最上行で埋める）。つり革は `state.lean`（`curve` をなめらかに追った値。`journey.js` が書く）で傾く。
+- **高架の線路際**（`scenery/viaduct.js`）: `drawTrackside` の末尾で `viaductTrack` が、elev > 0 の列だけ消して描き直す（チャンクの `r` は使わず、高架の番号のハッシュから作った計画で防音壁・道路をまたぐ鋼桁・架線柱を散らす）。elev 0〜0.3 は盛土、0.3〜0.7 は擁壁、0.7 以上は高欄。
+- **カーブで前方の車両は見せない**（ユーザーの方針、2026-11-14）: 窓の端に自分の列車を描く演出は試したが、絵として違和感が大きいので削除した。カーブ感（遠景の速さの変化）と高架の変化は控えめだが、調整は保留（後で行う想定）。
+- **巡航速度**（`journey.js`）: `cruiseAt(d, end)` が `speedLimit` を先読みして位置だけから目標速度を決め、'run' の間は加速度の上限つき（+4.8 / −4 ドット/秒²）で追う。駅間ごとの最高はおよそ 77〜113 km/h、きついカーブで 47〜60 km/h。あり得る最高速度は `V_MAX`（`course.js`）。
+
+## バイオームと景色の組み立て
+
+- **バイオーム**（`world.js`）: もとは1本の波 `wave(d)`（都心 1 ↔ 街から最も離れた地点 0 の三角波＋位相のノイズ。出発直後は必ず都心。1周の基準は 64000 ドット）。都市度 `urban(d)` は波の底（`v < FLOOR`）を 0 に平らにしたもので、バイオームはその帯（境目 0.25 / 0.5 / 0.76 を smoothstep で混ぜる）。波の底では田園の重みを山間 `mount` か海沿い `sea` に分ける（`wildKind(k)`: 1周ごとに交互、どちらが先かはシード次第）。だから 都心↔住宅街↔郊外↔田園↔（山間 or 海沿い）の順にしか移らない。`world(d)` が重み（`city / resi / suburb / rural / mount / sea`、合計 1）、`wild`（街から離れた度合い 0..1）、`BIOMES` 表を重みで混ぜた連続値（`height / build / tree / paddy / hill` など）を返す。
+- **景色の組み立て**: 各レイヤーは `env(L, i, x)`（`layers.js`）でその地点の `world()` を得る。窓の中央で全レイヤーが同じ地点を指すよう位置合わせしてある。`scenery/landscape.js` が遠景・中景・近景の本体で、地面を区画に分けて `pickBiome` / `pickKind` で重みに比例して選び、`city.js` / `suburb.js` / `rural.js` の描画関数を呼ぶ。線路際（`trackside.js`）もバイオーム別の出現率表から選ぶ。
+- **山間・海沿い**（`scenery/mountain.js` / `scenery/sea.js`）: `landscape.js` と `trackside.js` が、重み `e.mount` / `e.sea` が 0 より大きい地点でだけ先に呼ぶ（重みが 0 の地点では乱数を消費しないので、ほかのバイオームの絵は変わらない）。どちらも「開けた区間」と「さえぎられる区間」を走行距離の低周波ノイズで決め、全レイヤーが `distAt` 経由で同じ値を見る: 山間は `openAt(d)`（0 閉＝森の斜面・土手・擁壁 〜 1 開＝谷・渓流・集落・棚田）、海沿いは `coastAt(e, d)`（陸がどこまで続くか。0 線路のすぐ先が海 / 1 浜 / 2 岬 / 3 以上は海が見えない）と波打ち際の高さ `shoreY(c)`。稜線・森の樹冠・海面はレイヤー通し座標で決めるので、チャンクの境目でつながる。海面の色は画面の y だけで決まる段なので、3レイヤーでひと続きに見える。
+
+## トンネルと橋
+
+- **トンネルと橋の位置**（`features.js`）: d = 0 から 250 ドット刻みで `world(d)` を走査し、区間 `{ type: 'tunnel' | 'bridge', n, a, b, len, h, via }` の表を決定的に伸ばす（`a`〜`b` は線路際の座標、`h` は絵づくり用のハッシュ）。トンネルは山間の重みが 0.5 をまたぐ地点（必ず）、海沿いの重みが 0.5 をまたぐ地点（確率 0.5）、山間の中（まれ）。橋は山間・海沿い以外で 14000 ドットの枠ごとに確率 0.5。駅のホームから 700、区間どうしは 1500 以上あける。引くのは `featuresIn` / `featureNear` / `nextFeature` / `featureNo`、坑口への近さ `tunnelProx(d, ramp)`、音の切り替え用 `featureMix(d)`。確率・長さは冒頭の定数。確認は `shots` の `feat`（一覧）/ `tunnel` / `bridge` / `at:<距離>` mode。
+- **橋と川**（`scenery/bridge.js`）/ **トンネル**（`scenery/tunnel.js`）: どちらも既存の描画が済んだ後に、区間の `h` から作った専用の乱数で上から描く（チャンクの `r` を使わないので、区間から離れた地点の絵は変わらない）。位置はレイヤー通し座標 `toX(d, f)` で決めるのでチャンクの境目でつながる。`landscape.js` / `trackside.js` の末尾で `riverBand` / `bridgeTrack`、`tunnelHill` / `tunnelTrack` を呼ぶ。川は各レイヤーが `[a, b]` を自分の視差で水面にするので、橋の中ほどで奥へすぼまって見える。トンネルは坑口から 700 ドット以内で `openAt` を閉じ、`coastAt` を岬へ寄せる。窓の手前の層は `truss`（id 7）と `tunnel`（id 8）で、`render()` が `bridgeNear` / `tunnelNear` のときだけ描く。画面全体がトンネルの壁に隠れているあいだ（`tunnelCovers`）は空・奥のレイヤー・架線を描かない。橋の上とトンネルの山の中では架線柱を立てない。
+- **トンネル・橋の音**（`audio.js`）: `driveAudio()` が席の位置の `featureMix` を引き、トンネルでは走行音を強めてこもらせ低域の共鳴を足し、橋では共鳴の強いバンドパス3本の鳴りを足す。`click(when, strength, mix)` はトンネルで反響バスへ送り、橋で金属の響きを足す。定数は `VOL` / `TUNNEL` / `BRIDGE`。
+
+## 絵柄と描画の重ね順
+
+- **絵柄の仕組み**: 色はすべて `R()`（矩形描画）内で `P(color)` を通り、`STYLES[*].pal` が色を差し替える（結果は `palCache`）。**新しい描画コードも必ず `R()` か `P()` を通すこと**。直接 `fillStyle` を設定すると絵柄切り替えに追従しない。`outline`（輪郭線 `ink()`）と `glass`（窓の映り込み）も絵柄ごとのフラグ。
+- **描画の重ね順**: 空 → 各レイヤー → 架線 → ホーム → トラス → トンネルの壁 → ガラスの映り込み → 車内（`drawInterior()` で別キャンバスに一度だけ描き、窓を `clearRect` で抜いたもの）→ ドアの外の描き足し・扉（`drawDoors(g, state.door)`、毎フレーム）→ つり革・乗客（毎フレーム描画）。
+
+## 駅と乗客
+
+- **駅**: `stations.js` の `stationAt(k)` がシードから駅（停車位置 `pos`、駅名 `name` / 読み `kana`、規模 `size`、ホームの範囲 `x0`〜`x1`）を決定的に決める。`journey.js` の `stepJourney()` が 巡航 → 減速 → 停車・ドア開閉 → 発車 を進め、`state.phase` / `state.door` / `state.stopT` / `state.station` に書く。`state.station` は発車した瞬間に次の駅へ替わるので、ホームの描画は `stationNear()` / `stationsIn()` で引く。停車中は窓の中央（x=160）に `pos + 160` が来る。ホームの絵は `scenery/station.js`、駅名標のひらがなは `kana.js`（9×9 のビットマップ）。確認は `shots` の `station` / `door` / `journey` mode。
+- **乗客**（`passengers.js`）: 表示は `state.passMode`（`on` / `sil` シルエット / `off`）。乗客の描画はすべて `PR()` を通す（シルエットのとき単色に差し替える包み。中で `R()` を呼ぶ）。`makePerson(r)` が体格・姿勢・しぐさ・持ち物の高さなどの属性を作り、`drawPerson`（座った姿）と `drawWalker`（通路を歩く横向きの姿）が描く。顔ぶれは「区間」（駅 n を出てから駅 n+1 に着くまで）の純粋な関数 `rosterAt(n)` で、駅ごとに席単位で降りる（0.3）・乗る（0.32 + 0.38×都心の重み）を決める。停車中の乗り降りの動きは `swapAt(k)` の予定と `state.stopT` だけから決まる（積算する状態を持たない）。確認は `shots` の `pass` / `walk` / `swap` mode。
+
+## 時刻・天気・トーン・灯り
+
+- **時刻と天気**（`clock.js`。`state.js` / `rng.js` だけに依存）: どちらも走行距離の純粋な関数（ユーザーの方針、2026-11-14: 時間帯は走行に連動して巡る／天気は区間ごとに移り変わる／通常の画面に設定は増やさず `?debug` で固定）。`timeAt(d)` は時刻 0..24（1日 `DAY_LEN` = 400000 ドット。昼 72% / 夕 5% / 夜 18% / 朝 5%。出発時刻はシード次第）、`dayPhase(d)` は `{ hour, day, dusk, dawn, night }`、`weatherAt(d)` は `{ cloud, rain, snow }`（各 0..1。区間 `WX_SEG` ごとに 晴 0.6 / 曇 0.22 / 雨 0.12 / 雪 0.06、必ず曇りを経由）。固定は `state.todFix`（null か時刻）/ `state.wxFix`（null か `'clear' | 'cloud' | 'rain' | 'snow'`、`'rain:0.5'` の強さ指定も可）。確認は `shots` の `clock` / `tod` / `wx` / `tonerun` mode と `SHOTS_TOD` / `SHOTS_WX` / `SHOTS_HOURS` / `SHOTS_WXS`。**`shots` の既存 mode は既定で昼・晴に固定して撮る**。
+- **トーン**（`tone.js`。`scenery/index.js` の後、`journey.js` の前）: 窓の中央の地点の時刻（40 段の輪: 0 昼 → 1〜19 夕 → 20 夜 → 21〜39 朝）× 曇り具合（0〜4）× 雨・雪の強さ（0〜2）に丸めたもの。`P(c)` は「トーンの変換 `tn.fn(c, depth, ground)` → 絵柄の変換」の順で、色のキャッシュはトーンの key ごと。**昼・晴（`tn.id`）は恒等で、絵は時間帯を入れる前と1ピクセルも変わらない**（変えたら `shots` のハッシュで確かめる）。トーンは窓の外の景色だけにかける（`setTone(tone, depth)`。`Layer.chunk`、`render()` の架線など）。車内・乗客・トンネルの中の壁は昼の色のまま。`depth` は層の遠さ（`AIR`。遠いほど空気の色になじむ）、`ground` は `setGround(y)` より下の矩形（濡れた地面・雪の地面）。チャンクはトーンごとに焼き込むので、段階が替わると `stepTone()` が次のトーンのチャンク（`Layer.cacheB`）を1フレーム1枚ずつ作り、そろったら 1.8 秒のクロスフェード（`STYLES[*].fade` が真の real / soft だけ。game / mono は瞬時）で入れ替える。ジャンプ・シード変更・絵柄変更・固定の変更・早送り中は即座に作り直す。色の見た目は `tone.js` の `DUSK_KEYS` / `DAWN_KEYS`（補間して `tn.look`）と `weatherRGB` / `overcast` / `WX_LOOK`。`state.hour` / `state.wx` / `state.tone` に現在値。
+- **空**（`scenery/sky.js`）: `buildSky(tone, cv)` が `tone.look.sky` の帯を描く（昼・晴は元のコードのまま）。地平線の光のにじみ、星、月（位置と欠け方はシードごと）。曇りの雲は `weatherClouds`（チャンクの `r` は使わない）。
+- **夜の灯り**（`lights.js`。`palette.js` ← `lights.js` ← `layers.js`）: 灯りは `E()` / `RE()`（トーンをかけず絵柄だけ通す）で描く。灯すかどうかは**チャンクの乱数 `r` を使わず** `hash32(シード×レイヤー×チャンクの種, x, y)` で決め、トーンの `lit`（夕方 0 → 夜 1。雨・雪・曇りで少し持ち上げる）がしきい値を超えたら灯る（段階が進んでも消えない・場所が変わらない）。窓は `win()`（`lights.js` に移した）、ほかは `glow` / `lamp` / `halo`。駅のホームは「灯りに照らされた色」で描く（`station.js` の `LIT_ON`）。夜は `tunnelGlass(g, dist, night)` が窓に車内を映す。
+- **天気の描画**（`weather.js`）: `bakeWeather`（雨・雪のトーンのチャンクの仕上げ: 積雪、濡れた屋根と地面のてり、夜の灯りの映り込み。`Layer` の `gy` / `refl` / `cap`）、`drawFall`（雨脚・舞う雪。`render()` が遠景の後・近景の後・架線の後の3段で呼ぶ）、`drawGlassRain`（窓の水滴と筋。`tunnelGlass` の後。向きは今の速度で決まり、積算する状態は持たない）。毎フレーム描くものは連続値 `state.wx` で動く。雨音は `audio.js`（連続音と屋根を打つ粒の2系統。`VOL.rain` / `VOL.rainRoof` / `RAIN`。トンネルの中では止む。雪は走行音を少し丸める `SNOW`）。
+
+## デバッグ・揺れ・表示
+
+- **デバッグ**（`debug.js`）: `?debug` には時間帯・天気を固定するボタンの段と「次の夕方へ」「次の朝へ」「次の天気の変わり目へ」もある。`initDebug(render)` を `main.js` が呼ぶ。早送り・停止は `state.rate`（`frame()` が同じ `dt` の `update()` を `rate` 回くり返す。0 なら進めずに描くだけ。`dt` は大きくしない）。地点への移動は `journey.js` の `jumpTo(d)`（`seekJourney` ＋ 継ぎ目・揺れ・音の予約の後始末）で、`setSeed()` もこれを使う。
+- **揺れと音の同期**: 25m レール = 250 ドット（`RAIL`）。継ぎ目を越えるたび `jointPattern()`（`main.js`）が台車ごとの `click()` 音と揺れ（`state.bobs`）を同時に予約する。揺れは半ドット・台車1つにつき1回で固定（大きくしない方針）。
+- **半ドット表示 `SUB = 2`**: キャンバスを内部解像度（320×130、内部座標 y=20〜150）の2倍で持ち、景色を半ドットずらすための仕組み。残すこと。
+- **表示倍率 `fit()`**: 端末ピクセルの整数倍で拡大してドットを均一に保つ。
+
+## 座標の目安（車内、内部座標）
+
+- 窓の開口部: x 50〜158 と 162〜270、y 28〜104。ドア窓: x 8〜26 と 294〜312、y 32〜94
+- 景色の描画域: y 26〜106（景色内 y = 画面 y − 26）
+- 座席の背もたれ: y 110〜136、座面: y 136〜148、7人掛け（1席 約32.6ドット、x 46〜274）
+- 手すり（縦）: x 111、207（席の境目）
+- 線路際の縮尺: 1ドット ≒ 10cm。時速表示は `speed × 0.36`（240 ドット/秒 ≒ 86km/h）
