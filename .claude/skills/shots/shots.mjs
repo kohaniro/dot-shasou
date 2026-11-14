@@ -2,6 +2,7 @@
 // 使い方: node shots.mjs <outDir> <seed,seed> <style,style> [mode]
 //   mode: both（既定） | raw | view | run | perf | pano:<距離,距離> | at:<距離,距離> | zoom:<距離,距離> | station[:<k,k>] | door[:<k,k>] | journey[:<秒>] | pass | walk | swap[:<k,k>] | feat | tunnel[:<k,k>] | bridge[:<k,k>]
 //         | course | curve[:<k,k>] | elev[:<k,k>] | clock | tod[:<距離,距離>] | wx[:<距離,距離>] | tonerun[:<秒>]
+//         | gif:<開始距離>（README 用の GIF。SHOTS_GIF_SECS 既定8 / SHOTS_GIF_FPS 既定20 / SHOTS_GIF_SCALE 既定1）
 //   時間帯・天気は、既定では昼・晴に固定して撮る。環境変数 SHOTS_TOD=auto|dawn|noon|dusk|night|<時刻> と SHOTS_WX=auto|clear|cloud|rain|snow で変える（auto = 走行距離から決まる値。cloud:0.5 のように強さも付けられる）
 //   SHOTS_WXS=clear,cloud:0.5,cloud,rain:0.5,rain のように並べると、wx mode がその段階を順に撮る
 // 時間と Math.random を差し替えて固定ステップで進めるので、同じ引数なら同じ絵になる。各ケースを2回描いて一致も確かめる。
@@ -11,6 +12,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { encodeGif } from './gif.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const [outArg = path.join(os.tmpdir(), 'dot-shasou-shots'), seedArg = '1234', styleArg = 'real', mode = 'both'] = process.argv.slice(2);
@@ -280,6 +282,15 @@ const stub = (ls) => `(() => {
     return { start, ev, fades, swaps, maxMs, slow, frames: n, views, end: 'dist=' + Math.round(S.dist) + ' ' + hm(S.hour) + ' tone=' + S.tone.key + ' phase=' + S.phase };
   };
   window.__view = () => document.getElementById('view').toDataURL('image/png');
+  window.__viewSize = () => { const v = document.getElementById('view'); return [v.width, v.height]; };
+  // GIF 用: 画面（#view）の RGBA を base64 で返す
+  window.__viewPx = () => {
+    const v = document.getElementById('view'), d = v.getContext('2d').getImageData(0, 0, v.width, v.height).data; let s = '';
+    for (let i = 0; i < d.length; i += 32768) s += String.fromCharCode.apply(null, d.subarray(i, i + 32768));
+    return btoa(s);
+  };
+  // GIF 用: ms 進める（1 ステップは 50ms 以下）
+  window.__advance = ms => { const n = Math.max(1, Math.ceil(ms / 50 - 1e-9)); for (let i = 0; i < n; i++) window.__step(1, ms / n); };
   // 画面のうち座席まわり（内部座標 y=76〜150、幅320）を3倍に拡大した絵
   window.__seat = () => {
     const v = document.getElementById('view'), k = v.width / 320, c = document.createElement('canvas'); c.width = 960; c.height = 74 * 3;
@@ -472,6 +483,24 @@ for (const seed of seedArg.split(',')) for (const style of styleArg.split(',')) 
       if (pass === 0) console.log('  ' + r.stations.join('\n  ') + '\n  events:\n    ' + r.ev.join('\n    ') + '\n  every 10s: ' + r.log.join(' | ') +
         `\n  maxAcc=${r.maxAcc} maxDec=${r.maxDec} maxAccJumpPerStep=${r.maxAccJumpPerStep} crawl(brake & v<3)=${r.crawlSecs}s`);
       h.push(r.ev.join(';'));
+    } else if (mode.startsWith('gif:')) { // README 用の GIF: __goto した地点から固定ステップで進め、毎フレームの画面を GIF にする
+      const secs = Number(process.env.SHOTS_GIF_SECS || 8), fps = Number(process.env.SHOTS_GIF_FPS || 20), sc = Number(process.env.SHOTS_GIF_SCALE || 1);
+      const delay = Math.max(1, Math.round(100 / fps)), nf = Math.max(1, Math.round(secs * fps));
+      await pg.ev(`__goto(${Number(mode.slice(4))})`);
+      const [cw, ch] = await pg.ev('__viewSize()'); const ow = Math.max(1, Math.round(cw * sc)), oh = Math.max(1, Math.round(ch * sc));
+      const frames = [];
+      for (let i = 0; i < nf; i++) {
+        if (i > 0) await pg.ev(`__advance(${1000 / fps})`);
+        const src = Buffer.from(await pg.ev('__viewPx()'), 'base64');
+        if (ow === cw && oh === ch) frames.push(new Uint8Array(src.buffer, src.byteOffset, src.length));
+        else { const f = new Uint8Array(ow * oh * 4); for (let y = 0; y < oh; y++) for (let x = 0; x < ow; x++) { const s = (Math.min(ch - 1, Math.floor(y / sc)) * cw + Math.min(cw - 1, Math.floor(x / sc))) * 4, d = (y * ow + x) * 4; f[d] = src[s]; f[d + 1] = src[s + 1]; f[d + 2] = src[s + 2]; f[d + 3] = src[s + 3]; } frames.push(f); }
+        if (i === 0 && process.env.SHOTS_GIF_DUMP) fs.writeFileSync(process.env.SHOTS_GIF_DUMP + '.rgba', frames[0]);
+        if (i === nf - 1 && process.env.SHOTS_GIF_DUMP) fs.writeFileSync(process.env.SHOTS_GIF_DUMP + '-last.rgba', frames[i]);
+      }
+      const r = encodeGif(frames, ow, oh, delay);
+      const name = `gif-${seed}-${style}.gif`; fs.writeFileSync(path.join(OUT, name), r.buf);
+      if (pass === 0) console.log(`  gif: ${r.frames} frames (${secs}s @ ${fps}fps, delay ${delay}cs)  canvas ${cw}x${ch} -> ${ow}x${oh}  colors ${r.colors}${r.quantized ? ' (quantized to 255 from more)' : ' (lossless)'}  size ${r.buf.length} bytes (${(r.buf.length / 1024).toFixed(1)} KiB)`);
+      h.push(crypto.createHash('sha256').update(r.buf).digest('hex'));
     } else if (mode.startsWith('at:')) { // 指定した走行距離（state.dist。窓の中央は +160）の、車内込みの画面
       const urls = []; for (const d of mode.slice(3).split(',')) { await pg.ev(`__goto(${d})`); urls.push(await pg.ev('__view()')); }
       h.push(save(`at-${seed}-${style}.png`, await pg.ev(`__sheet(${JSON.stringify(urls)})`)));
