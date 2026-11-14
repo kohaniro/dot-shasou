@@ -64,7 +64,7 @@ function makePlan(f) {
   };
   return p;
 }
-const tunnelsIn = (L, i, reach) => featuresIn(distAt(L, i, 0) - reach, distAt(L, i, L.cw) + reach).filter(f => f.type === 'tunnel').map(planOf);
+const tunnelsIn = (L, i, reach, pad = 0) => featuresIn(distAt(L, i, -pad) - reach, distAt(L, i, L.cw + pad) + reach).filter(f => f.type === 'tunnel').map(planOf);
 
 /* ---------- 壁の層: 照明と、照明の合間の小物（k 番目の照明と、その次の照明との間の枠） ---------- */
 function slotOf(p, k) {
@@ -276,9 +276,9 @@ function hillAt(L, ps, X, d) {
   return h;
 }
 export function tunnelHill(g, L, i) {
-  const o = HILL[L.id], cw = L.cw, ps = tunnelsIn(L, i, o.out + 40 / L.f);
+  const o = HILL[L.id], cw = L.cw, PAD = L.id === 4 ? 12 : 8, ps = tunnelsIn(L, i, o.out, PAD);
   if (!ps.length) return;
-  const PAD = L.id === 4 ? 12 : 8, H = []; let top = 0;
+  const H = []; let top = 0;
   for (let x = -PAD; x < cw + PAD; x++) { const h = hillAt(L, ps, i * cw + x, distAt(L, i, x)); H.push(h); if (h > top) top = h; }
   if (top < 1) return;
   const c = document.createElement('canvas'); c.width = cw; c.height = SH;

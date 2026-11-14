@@ -60,7 +60,7 @@ const stub = (ls) => `(() => {
   localStorage.clear(); for (const k in ls) localStorage.setItem(k, ls[k]);
   window.__step = (n, ms) => { for (let i = 0; i < n; i++) { now += ms; const c = q.splice(0); for (const f of c) f(now); } return q.length; };
   window.__mods = async () => {
-    if (!window.__m) window.__m = { st: await import('/src/state.js'), w: await import('/src/world.js'), sc: await import('/src/scenery/index.js'), sky: await import('/src/scenery/sky.js'), j: await import('/src/journey.js'), sn: await import('/src/stations.js'), ft: await import('/src/features.js') };
+    if (!window.__m) window.__m = { st: await import('/src/state.js'), w: await import('/src/world.js'), sc: await import('/src/scenery/index.js'), sky: await import('/src/scenery/sky.js'), j: await import('/src/journey.js'), sn: await import('/src/stations.js'), ft: await import('/src/features.js'), co: await import('/src/course.js'), ly: await import('/src/layers.js') };
     return window.__m;
   };
   // 最初の1周について、各バイオームの中心と遷移の中間の距離を求める
@@ -82,12 +82,12 @@ const stub = (ls) => `(() => {
   // トンネル・橋の「架線より手前に重ねる層」も Layer として layers に足せば（render() の重ね順と同じ位置に）、ここは直さなくてもこの絵に入る。
   // Layer でない描き方（render() の中で毎フレーム直接描く）にする場合は、下のループの後に同じ描画を足すこと
   window.__raw = async (dist, wd, sc) => {
-    const { sc: S, sky, st } = await window.__mods();
+    const { sc: S, sky, st, co, ly } = await window.__mods(); const el = co.elev(dist + 160);
     const c = document.createElement('canvas'); c.width = wd * sc; c.height = 80 * sc; const g = c.getContext('2d'); g.imageSmoothingEnabled = false; g.scale(sc, sc);
     for (let x = 0; x < wd; x += 320) g.drawImage(sky.sky, x, 0);
     for (const L of S.layers) {
-      const wx = Math.floor(dist * L.f - (wd - 320) / 2), i0 = Math.floor(wx / L.cw), i1 = Math.floor((wx + wd - 1) / L.cw);
-      for (let i = i0; i <= i1; i++) g.drawImage(L.chunk(i), i * L.cw - wx, 0);
+      const wx = Math.floor(ly.layerOff(L, dist) - (wd - 320) / 2), i0 = Math.floor(wx / L.cw), i1 = Math.floor((wx + wd - 1) / L.cw);
+      for (let i = i0; i <= i1; i++) g.drawImage(L.chunk(i), i * L.cw - wx, Math.round(L.drop * el * 2) / 2);
     }
     return c.toDataURL('image/png');
   };
@@ -134,6 +134,56 @@ const stub = (ls) => `(() => {
       info.push(tag + ' dist=' + S.dist.toFixed(1) + ' phase=' + S.phase + ' speed=' + S.speed.toFixed(1) + ' mix(tunnel=' + m.tunnel.toFixed(2) + ' bridge=' + m.bridge.toFixed(2) + ') prox=' + ft.tunnelProx(S.dist + 160, 600).toFixed(2));
     }
     return { f, views, raws, info };
+  };
+  // 線形（course.js）の一覧と検証（d = 0〜dMax）: カーブ、向きの範囲、傾きの最大、高架、制限速度、実際に走らせた駅間ごとの最高速度
+  window.__course = async (dMax) => {
+    const { st, sn, ft, co, j, w } = await window.__mods(); const S = st.state, rows = [], bad = [];
+    const cs = [], es = [];
+    for (let c = co.nextCurve(0); c && c.a <= dMax; c = co.nextCurve(c.a + 1)) cs.push(c);
+    for (let e = co.nextElev(0); e && e.a <= dMax; e = co.nextElev(e.a + 1)) es.push(e);
+    let hMin = 0, hMax = 0, sMax = 0, cMax = 0, up = 0, top = 0, ph = 0;
+    for (let d = 0; d <= dMax; d += 10) {
+      const h = co.heading(d), el = co.elev(d), c = co.curve(d);
+      hMin = Math.min(hMin, h); hMax = Math.max(hMax, h); sMax = Math.max(sMax, Math.abs(h - ph) / 10); cMax = Math.max(cMax, Math.abs(c)); ph = h;
+      if (el > 0) up++; if (el >= 1) top++;
+      if (d % 50) continue;
+      const e = w.world(d), f = ft.featureNear(d, 0), s = sn.stationNear(d, 0);
+      if (el > 0 && (e.mount > 0 || e.sea > 0)) bad.push('elev in mount/sea @' + d);
+      if (el > 0 && ft.featureNear(d, 499)) bad.push('elev near feature @' + d);
+      if (el > 0 && el < 1 && sn.stationNear(d, 299)) bad.push('ramp at platform @' + d);
+      if (c !== 0 && sn.stationNear(d, 299)) bad.push('curve at platform @' + d);
+      if (c !== 0) { const n = ft.featureNear(d, 299); if (n && (n.type === 'bridge' ? d >= n.a - 199 && d <= n.b + 199 : Math.abs(d - n.a) < 300 || Math.abs(d - n.b) < 300)) bad.push('curve near ' + n.type + ' @' + d); }
+      if (d < 3000 && (c !== 0 || el > 0)) bad.push('not straight at start @' + d);
+    }
+    cs.forEach((c, i) => rows.push(['curve', '#' + c.n, 'a=' + c.a, 'len=' + c.len, 'h ' + c.h0.toFixed(1) + '→' + c.h1.toFixed(1), 'peak ' + (1.5 * (c.h1 - c.h0) / c.len / co.SLOPE_MAX).toFixed(2), i ? 'gap ' + (c.a - cs[i - 1].b) : ''].join('  ')));
+    es.forEach(e => { const m = w.world((e.a + e.b) / 2), k1 = sn.nextStation(e.a - 160).k, inn = []; for (let k = k1; sn.stationAt(k).x0 < e.b; k++) inn.push('k' + k + (co.elev(sn.stationAt(k).pos + 160) >= 1 ? '(高架)' : '(勾配)')); rows.push(['elev', '#' + e.n, 'a=' + e.a, 'b=' + e.b, 'len=' + (e.b - e.a), 'up=' + e.up, 'down=' + e.down, 'city+resi@mid ' + (m.city + m.resi).toFixed(2), 'stations ' + (inn.join(',') || '-')].join('  ')); });
+    // 実際に走らせる（描画なし・50ms 刻み）: 駅間ごとの最高速度、巡航中の加減速の最大、制限の超過
+    j.jumpTo(0); const legs = []; let leg = { k: S.station.k, vmax: 0, lim: [1e9, 0] }, acc = 0, dec = 0, over = 0, tsec = 0;
+    for (let n = 0; n < 400000 && S.dist < dMax; n++) {
+      const ph0 = S.phase, v0 = S.speed; j.stepJourney(0.05); tsec += 0.05;
+      if (S.station.k !== leg.k) { legs.push(leg); leg = { k: S.station.k, vmax: 0, lim: [1e9, 0] }; }
+      leg.vmax = Math.max(leg.vmax, S.speed);
+      if (S.phase === 'run' && ph0 === 'run') { const a = (S.speed - v0) / 0.05; acc = Math.max(acc, a); dec = Math.min(dec, a); const l = co.speedLimit(S.dist); over = Math.max(over, S.speed - l); leg.lim[0] = Math.min(leg.lim[0], l); leg.lim[1] = Math.max(leg.lim[1], l); }
+    }
+    const kmh = v => Math.round(v * 0.36);
+    const kinds = [...new Set(bad.map(b => b.split('@')[0]))];
+    return { rows, bad: kinds.map(b => b + '×' + bad.filter(x => x.startsWith(b)).length),
+      sum: 'curves ' + cs.length + '  heading ' + hMin.toFixed(1) + '〜' + hMax.toFixed(1) + '  max|slope| ' + sMax.toFixed(4) + '  max|curve| ' + cMax.toFixed(2) + '  elev spans ' + es.length + '  elev>0 ' + (100 * up * 10 / dMax).toFixed(1) + '%  elev=1 ' + (100 * top * 10 / dMax).toFixed(1) + '%',
+      run: 'sim ' + Math.round(tsec) + 's  run accel max +' + acc.toFixed(2) + ' / ' + dec.toFixed(2) + '  max over limit ' + over.toFixed(2) + '  legs vmax km/h: ' + legs.map(l => 'k' + l.k + ' ' + kmh(l.vmax) + '(制限 ' + kmh(l.lim[0]) + '〜' + kmh(l.lim[1]) + ')').join(' ') };
+  };
+  // カーブ・高架（k 番目）のコマ: カーブは 始点 / 1/4 / 中ほど（最もきつい）/ 終点 が窓の中央、高架は 勾配の始点 / 勾配の中ほど / 上りきった所 / 高架の中ほど / 下り勾配の中ほど
+  window.__courseShot = async (type, k) => {
+    const { st, co } = await window.__mods(); const S = st.state, views = [], raws = [], info = [];
+    const next = type === 'curve' ? co.nextCurve : co.nextElev; let c = next(0);
+    for (let n = 1; c && n < k; n++) c = next(c.a + 1);
+    if (!c) return null;
+    const pts = type === 'curve' ? [['start', c.a], ['quarter', c.a + c.len / 4], ['middle', c.a + c.len / 2], ['end', c.b]]
+      : [['ramp-start', c.a], ['ramp-mid', c.a + c.up / 2], ['top', c.a + c.up], ['middle', (c.a + c.b) / 2], ['down-mid', c.b - c.down / 2]];
+    for (const [tag, d] of pts) {
+      await window.__goto(Math.round(d) - 160); views.push(window.__view()); raws.push(await window.__raw(S.dist, 480, 2));
+      info.push(tag + ' dist=' + S.dist.toFixed(1) + ' phase=' + S.phase + ' speed=' + S.speed.toFixed(1) + ' heading=' + co.heading(S.dist + 160).toFixed(1) + ' curve=' + S.curve.toFixed(2) + ' elev=' + S.elev.toFixed(2) + ' lean=' + S.lean.toFixed(2));
+    }
+    return { c, views, raws, info };
   };
   // 固定ステップで secs 秒進め、進行を記録して検証する（描画もするが画像は保存しない）
   window.__journey = async (secs, dt) => {
@@ -292,6 +342,19 @@ for (const seed of seedArg.split(',')) for (const style of styleArg.split(',')) 
         const r = await pg.ev(`__feature('${type}', ${k})`);
         if (!r) { if (pass === 0) console.log(`  ${type} ${k}: 見つからない`); continue; }
         if (pass === 0) console.log([`  ${type} ${k}: #${r.f.n} a=${r.f.a} b=${r.f.b} len=${r.f.len} via=${r.f.via} h=${r.f.h}`, ...r.info].join('\n    '));
+        h.push(save(`${type}-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.views)})`)));
+        h.push(save(`${type}-raw-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.raws)})`)));
+      }
+    } else if (mode === 'course') { // 線形の一覧と検証（画像なし）
+      const r = await pg.ev('__course(200000)');
+      if (pass === 0) console.log(['', ...r.rows, r.sum, r.run, 'violations: ' + (r.bad.length ? r.bad.join(' / ') : 'none')].join('\n  ').slice(1));
+      h.push(crypto.createHash('sha256').update(r.rows.join(';') + r.run).digest('hex').slice(0, 12));
+    } else if (/^(curve|elev)(:|$)/.test(mode)) { // カーブ・高架の k 番目ごとのコマ
+      const [type, arg] = mode.split(':'), ks = arg ? arg.split(',').map(Number) : [1, 2];
+      for (const k of ks) {
+        const r = await pg.ev(`__courseShot('${type}', ${k})`);
+        if (!r) { if (pass === 0) console.log(`  ${type} ${k}: 見つからない`); continue; }
+        if (pass === 0) console.log([`  ${type} ${k}: ${JSON.stringify(r.c)}`, ...r.info].join('\n    '));
         h.push(save(`${type}-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.views)})`)));
         h.push(save(`${type}-raw-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.raws)})`)));
       }

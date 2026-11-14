@@ -91,21 +91,18 @@ export function drawInterior() {
   // the mid stanchions pass in front of the glass
   [111, 207].forEach(px => { S(px, 28, 1, 76, '#dfe3e5'); S(px + 1, 28, 1, 76, '#8d9396'); });
 }
-export function drawStraps(g, t, jolt) {
-  const y0 = 8, y1 = 30, bw = 2, rw = 7, rh = 6;
+/* つり革。輪は円形（直径 8 ドット、線の太さ 1）。lean はカーブでの傾き（輪の位置でのドット数。正で右へ） */
+const RING = [[2, 4], [1, 1, 6, 1], [0, 1, 7, 1], [0, 1, 7, 1], [0, 1, 7, 1], [0, 1, 7, 1], [1, 1, 6, 1], [2, 4]]; // 行ごとの [x, 幅, ...]
+export function drawStraps(g, t, jolt, lean = 0) {
+  const y0 = 8, y1 = 30, bw = 2, rw = 8;
   for (let k = 0; k < 8; k++) {
     const x = 62 + k * 28;
-    const off = Math.round(Math.sin(t * 1.9 + k * 0.5) * 1.1 + jolt * Math.sin(k * 1.3 + t * 9));
+    const off = Math.round(lean + Math.sin(t * 1.9 + k * 0.5) * 1.1 + jolt * Math.sin(k * 1.3 + t * 9));
     for (let y = y0; y < y1; y++) R(g, x + Math.round(off * (y - y0) / (y1 - y0)), y, bw, 1, y < y1 - 4 ? '#d7d4c8' : '#9a9c98');
     for (let p = 0; p < 2; p++) {
       g.fillStyle = P(p ? '#f4f4f0' : '#5d6266');
-      const ox = x + off - (rw >> 1) + (bw >> 1) + (p ? 0 : 1), oy = y1 + (p ? 0 : 1);
-      for (let j = 0; j < rh; j++) {
-        const f = j / (rh - 1), ins = f <= 0.34 ? 0 : Math.round((f - 0.34) / 0.66 * rw * 0.3);
-        if (j === 0) g.fillRect(ox + 1, oy, rw - 2, 1);
-        else if (j === rh - 1) g.fillRect(ox + ins, oy + j, rw - 2 * ins, 1);
-        else { g.fillRect(ox + ins, oy + j, 1, 1); g.fillRect(ox + rw - 1 - ins, oy + j, 1, 1); }
-      }
+      const ox = x + off - (rw >> 1) + (bw >> 1) + (p ? 0 : 1), oy = y1 - 1 + (p ? 0 : 1);
+      RING.forEach((row, j) => { for (let i = 0; i < row.length; i += 2) g.fillRect(ox + row[i], oy + j, row[i + 1], 1); });
     }
   }
 }

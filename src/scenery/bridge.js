@@ -2,7 +2,7 @@ import { W, SH, state } from '../state.js';
 import { hash32, rng, ri, pick } from '../rng.js';
 import { R, shade, tint, mix, HAZE, GRASS, PATH, CONC, GRAVEL, SIGN, RIVER, GLINT, LEVEE, REED, DIRT, REVET, REVET_D, TRUSS_PAINT, SPAN_PAINT } from '../palette.js';
 import { world } from '../world.js';
-import { distAt } from '../layers.js';
+import { distAt, layerX } from '../layers.js';
 import { featuresIn, featureNear } from '../features.js';
 import { hz, tree, bush, midTree } from './common.js';
 
@@ -31,7 +31,8 @@ const BAND = {       // レイヤー id → 地面の帯: base 地面の上端 /
   3: { base: 59, lev: 3, end: 69, haze: 0.14 },
   4: { base: 68, lev: 6, end: SH, haze: 0 }
 };
-export const toX = (d, f) => Math.round((d - W / 2) * f + W / 2); // 走行距離 → レイヤー通しの x（layers.js の distAt の逆）
+export const toX = (d, f) => Math.round((d - W / 2) * f + W / 2); // 走行距離 → レイヤー通しの x。カーブで流れない層（線路際より手前。pan = 0）用
+const toLX = (L, d) => Math.round(layerX(L, d));                  // 同じことを遠景・中景・近景で（layers.js の distAt の逆。カーブの pan を含む）
 
 /* ---------- 計画: 橋ごとに1度だけ作る ---------- */
 let planSeed = null; const plans = new Map();
@@ -59,8 +60,8 @@ export function riverBand(g, L, i) {
   for (const p of bridgesIn(L, i)) { band(g, L, i * L.cw, p); drawItems(g, L, i * L.cw, p); }
 }
 function band(g, L, ox, p) {
-  const id = L.id, { base, lev, end, haze } = BAND[id], f = L.f, cw = L.cw;
-  const H = c => haze ? hz(c, haze) : c, X = d => toX(d, f);
+  const id = L.id, { base, lev, end, haze } = BAND[id], cw = L.cw;
+  const H = c => haze ? hz(c, haze) : c, X = d => toLX(L, d);
   // 川の上に立っていた建物・木を消して奥を見通す（遠景は残す: 川の先の街並み）
   if (id !== 2) { const x0 = Math.max(0, X(p.a - p.cr) - ox), x1 = Math.min(cw, X(p.b + p.cr) - ox); if (x1 > x0) g.clearRect(x0, 0, x1 - x0, SH); }
   const sun = H(LEVEE[0]), dark = H(LEVEE[1]), sunD = H(shade(LEVEE[0], 0.14)), darkD = H(shade(LEVEE[1], 0.14)), road = H(PATH);
@@ -75,7 +76,7 @@ function band(g, L, ox, p) {
   }
   const x0 = Math.max(0, X(p.a - p.lo) - 1 - ox), x1 = Math.min(cw, X(p.b + p.lo) + 2 - ox);
   for (let x = x0; x < x1; x++) {
-    const gx = ox + x, d = (gx - W / 2) / f + W / 2, left = d - p.a < p.b - d, s = left ? d - p.a : p.b - d;
+    const gx = ox + x, d = distAt(L, 0, gx), left = d - p.a < p.b - d, s = left ? d - p.a : p.b - d;
     if (s < -p.lo) continue;
     if (s < p.li) { // 堤防
       const outer = s < -p.cr, crest = !outer && s <= p.cr;
@@ -113,7 +114,7 @@ function band(g, L, ox, p) {
 /* ---------- 川の小物: 計画の一部として、レイヤーごとに1度だけ決める（x はレイヤー通し座標） ---------- */
 function itemsOf(p, L) { return p.items[L.id] || (p.items[L.id] = buildItems(p, L)); }
 function buildItems(p, L) {
-  const r = rng(hash32(p.h, 72, L.id)), id = L.id, X = d => toX(d, L.f), out = [];
+  const r = rng(hash32(p.h, 72, L.id)), id = L.id, X = d => toLX(L, d), out = [];
   const sd = () => Math.floor(r() * 4294967296);
   const plains = [[X(p.a + p.li), X(p.wa), 1], [X(p.wb), X(p.b - p.li), -1]]; // 高水敷 [x0, x1, 水のある向き]
   const wx0 = X(p.wa), ww = X(p.wb) - wx0;

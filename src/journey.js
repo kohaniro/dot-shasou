@@ -1,8 +1,10 @@
-import { RAIL, state } from './state.js';
+import { W, RAIL, state } from './state.js';
 import { nextStation, stationAt } from './stations.js';
 import { sfx } from './audio.js';
+import { speedLimit, curve } from './course.js';
 
 /* ---------- 進行（巡航 → 減速 → 停車・ドア開閉 → 発車） ----------
+   巡航の速度は時刻ではなく位置で決まる: course.js の speedLimit(d)（バイオーム・駅間・カーブ）を、前方を先読みして追う。
    state.phase: 'run'（巡航）| 'brake'（駅へ減速中）| 'stop'（停車中）| 'depart'（発車して加速中）
    state.station: 向かっている駅（停車中はその駅。発車した瞬間に次の駅へ替わる）
    state.stopT: 停車してからの秒数（stop 以外では 0）
@@ -14,8 +16,34 @@ const V_SOFT = 25;           // これより遅いと減速度をゆるめる（
 const SOFT_MIN = 0.55;       // 停止の瞬間の減速度（A_BRAKE に対する比）
 const JERK_T = 1.2;          // 発車時、加速度が立ち上がるまでの秒数
 const MERGE = 20;            // 巡航速度との差がこれ以下になると加速をゆるめて合流する
+const RUN_ACCEL = 0.6 * A_ACCEL; // 巡航中、目標速度へ上げるときの加速度の上限
+const RUN_DECEL = 4;         // 巡航中、目標速度へ下げるときの減速度の上限
+const PLAN_DECEL = 0.9 * RUN_DECEL; // 先読みで見込む減速度（上限より少しゆるく見込み、追い切れずに行き過ぎないように）
+const GRID = 50;             // 先読みで制限速度を見る刻み（ドット）
+const LEAN_T = 0.9;          // つり革の傾き state.lean が curve を追う時定数（秒）
+const LEAN_V = 150;          // これより遅いと傾きを速度に比例して小さくする
 
-export const cruise = t => 240 * (0.9 + 0.08 * Math.sin(t * 0.07) + 0.03 * Math.sin(t * 0.23 + 1));
+/* 制限速度を GRID 刻みで覚えておく（先読みで毎フレーム 200 点ほど引くので） */
+let limSeed = null; const lims = new Map();
+function limAt(i) {
+  if (limSeed !== state.seed) { limSeed = state.seed; lims.clear(); }
+  let v = lims.get(i);
+  if (v === undefined) { v = speedLimit(i * GRID); lims.set(i, v); if (lims.size > 4000) for (const k of lims.keys()) { lims.delete(k); if (lims.size <= 2000) break; } }
+  return v;
+}
+/* 地点 d での巡航の目標速度: その地点の制限と、前方の制限へ PLAN_DECEL で減速して間に合う速度のうち、最も低いもの。
+   end（向かっている駅の pos）より先は見ない（次の駅間の係数は停車してから効く）。位置だけで決まるので、同じ地点なら同じ値 */
+export function cruiseAt(d, end = Infinity) {
+  let best = speedLimit(d);
+  for (let i = Math.floor(d / GRID) + 1; ; i++) {
+    const x = i * GRID, room = 2 * PLAN_DECEL * (x - d);
+    if (x > end || room >= best * best) break; // これより先の制限は、どれだけ低くても間に合う
+    const l = limAt(i), v2 = l * l + room;
+    if (v2 < best * best) best = Math.sqrt(v2);
+  }
+  return best;
+}
+const leanGoal = () => curve(state.dist + W / 2) * Math.min(1, state.speed / LEAN_V);
 
 /* 停車中のできごと（停車してからの秒数） */
 export const T_OPEN = 1.0, T_DOOR = 2.0, T_SIGNAL = 2.2, T_AFTER = 1.5;
@@ -56,8 +84,12 @@ function toBrake(st, s) {
 
 /* 地点 d の状態に置き直す（路線の切り替え、撮影での瞬間移動）。stopT を渡すと、駅の pos ちょうどなら停車中のその時刻にする */
 export function seekJourney(d, stopT = 0) {
+  seek(d, stopT);
+  state.lean = leanGoal(); // つり革の傾きは落ち着いた値にそろえる（同じ地点へ飛べば同じ状態）
+}
+function seek(d, stopT) {
   state.stopT = 0; state.door = 0; state.accel = 0; tau = 0; departT = 0;
-  const st = nextStation(d), s = st.pos - d, vc = cruise(state.t);
+  const st = nextStation(d), s = st.pos - d, vc = cruiseAt(d, st.pos);
   if (Math.abs(s) < 0.5) { stopAt(st, stopT); return; }
   state.dist = d;
   if (brakeDist(vc) >= s) { toBrake(st, s); return; }
@@ -98,18 +130,19 @@ export function stepJourney(dt) {
     if (tau === 0) { stopAt(state.station, 0); sfx('air'); }
     else { state.speed = lerpAt(BV, tau); state.dist = state.station.pos - lerpAt(BS, tau); }
   } else {
-    const vc = cruise(state.t);
+    const vc = cruiseAt(state.dist, state.station.pos);
     let v;
     if (state.phase === 'depart') {
       departT += dt;
       const a = A_ACCEL * Math.min(1, departT / JERK_T) * Math.min(1, Math.max(0, (vc - v0) / MERGE));
       v = v0 + a * dt;
-      if (vc - v <= 0.3) { v = vc; state.phase = 'run'; }
-    } else v = vc;
+      if (vc - v <= 0.3) { v = Math.max(vc, v0 - RUN_DECEL * dt); state.phase = 'run'; } // 目標が今の速度より下がっていても、急には落とさない
+    } else v = v0 < vc ? Math.min(vc, v0 + RUN_ACCEL * dt) : Math.max(vc, v0 - RUN_DECEL * dt);
     const st = state.station, s = st.pos - state.dist;
     // このフレームで止まるのに要る距離に届くなら、減速の曲線に乗り換える
     if (brakeDist(v) >= s - v * dt) toBrake(st, Math.max(0, s - v * dt));
     else { state.speed = v; state.dist += v * dt; }
   }
   state.accel = dt > 0 ? (state.speed - v0) / dt : 0;
+  state.lean += (leanGoal() - state.lean) * (1 - Math.exp(-dt / LEAN_T));
 }

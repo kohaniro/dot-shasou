@@ -5,11 +5,14 @@ import { clouds, far, mid, near, track, plat, truss, tunnel, layers } from './sc
 import { bridgeNear, poleOnBridge } from './scenery/bridge.js';
 import { tunnelNear, tunnelCovers, poleInTunnel, tunnelGlass } from './scenery/tunnel.js';
 import { drawDoorBackdrop } from './scenery/station.js';
+import { drawSelfTrain } from './scenery/selftrain.js';
 import { stationNear } from './stations.js';
 import { interior, drawInterior, drawStraps, drawDoors, doorShift, DOOR_W } from './interior.js';
 import { drawPassengers } from './passengers.js';
 import { ac, soundOn, click, driveAudio } from './audio.js';
 import { featureMix } from './features.js';
+import { curve, elev } from './course.js';
+import { layerOff } from './layers.js';
 import { stepJourney } from './journey.js';
 import { setSeed, seedFromHash, setPlaying, initUI } from './ui.js';
 import { initDebug } from './debug.js';
@@ -42,6 +45,11 @@ function scheduleHits() {
   }
 }
 
+/* カーブと高低差で、窓の外の絵を上下にずらす量（ドット。半ドット刻みに丸めて使う） */
+const CANT = 2;      // カーブ: curve = ±1 のとき、空以外の全部を一様に。正（窓がカーブの外側）で景色が下がる
+const LEAN = 3;      // つり革の傾き: state.lean = ±1 のとき、輪の位置で
+const half = v => Math.round(v * SUB) / SUB;
+
 /* ---------- frame ---------- */
 function update(dt) {
   state.t += dt;
@@ -70,16 +78,17 @@ function render() {
   let bob = 0;
   while (bobs.length && bobs[0] + 0.07 < t) bobs.shift();
   for (const b of bobs) if (t >= b && t < b + 0.07) { bob = 1 / SUB; break; }
-  const oy = SY + bob;
+  // カーブと高低差は窓の中央の地点の値で決める。レイヤーごとの下げ幅は Layer の drop（高架のとき、遠くの地面ほど少し・近くほど大きく下がる）
+  const cv = curve(dist + W / 2), el = elev(dist + W / 2), cant = half(cv * CANT);
+  state.curve = cv; state.elev = el;
+  const oy = SY + bob + cant;
+  const lay = (L, extra = 0) => L.render(cx, layerOff(L, dist) + extra, oy + half(L.drop * el), SY);
   cx.setTransform(SUB, 0, 0, SUB, 0, -VY * SUB);
   const dark = tunnelCovers(dist); // 画面全体がトンネルの壁に隠れているあいだは、奥の景色を描かない
   if (!dark) {
   cx.drawImage(sky, 0, SY);
-  clouds.render(cx, dist * clouds.f + t * 1.2, oy);
-  far.render(cx, dist * far.f, oy);
-  mid.render(cx, dist * mid.f, oy);
-  near.render(cx, dist * near.f, oy);
-  track.render(cx, dist * track.f, oy);
+  lay(clouds, t * 1.2);
+  lay(far); lay(mid); lay(near); lay(track);
   // 架線と架線柱（隣の線路）
   const SPAN = 480, wx = Math.floor(dist * 1.2), dr = 96, dro = 48, wy = 13, my0 = 5, sag = 6;
   cx.fillStyle = P('#3d4442');
@@ -92,16 +101,19 @@ function render() {
   for (let k = Math.floor(wx / SPAN); k * SPAN < wx + W + 20; k++) {
     const sx = k * SPAN - wx;
     if (poleOnBridge(k * SPAN) || poleInTunnel(k * SPAN)) continue; // 橋の上・トンネルの山の中には柱を立てない
-    R(cx, sx, SY, 4, SH + 2, '#4b5350'); R(cx, sx, SY, 1, SH + 2, '#75807c');
-    R(cx, sx - 12, SY + 3, 30, 2, '#4b5350');
+    const py = Math.floor(SY + Math.min(0, cant)), ph = SH + 2 + Math.ceil(Math.abs(cant)); // 柱は窓の上下の端まで届かせる
+    R(cx, sx, py, 4, ph, '#4b5350'); R(cx, sx, py, 1, ph, '#75807c');
+    R(cx, sx - 12, SY + 3 + cant, 30, 2, '#4b5350');
   }
   }
   // 駅のホーム（架線より手前）。駅の近くでだけ描く
-  if (stationNear(dist + W / 2, 160)) plat.render(cx, dist * plat.f, oy);
+  if (stationNear(dist + W / 2, 160)) lay(plat);
   // トラス橋の鉄骨（架線より手前）。橋の近くでだけ描く
-  if (bridgeNear(dist + W / 2)) truss.render(cx, dist * truss.f, oy);
+  if (bridgeNear(dist + W / 2)) lay(truss);
   // トンネルの壁と坑門（架線より手前）。トンネルの近くでだけ描く
-  if (dark || tunnelNear(dist + W / 2)) tunnel.render(cx, dist * tunnel.f, oy);
+  if (dark || tunnelNear(dist + W / 2)) lay(tunnel);
+  // きついカーブの内側: 窓の右端に前方の車両（低頻度の演出）
+  drawSelfTrain(cx, dist, cv, oy);
   // ガラスの映り込み
   if (STYLE.glass) {
     cx.globalAlpha = 0.08; cx.fillStyle = '#ffffff';
@@ -119,7 +131,7 @@ function render() {
   drawDoors(cx, dsh / DOOR_W);
   cx.drawImage(interior, 0, 0);
   drawPassengers(cx, t);
-  drawStraps(cx, t, bob ? 0.5 : 0);
+  drawStraps(cx, t, bob ? 0.5 : 0, state.lean * LEAN);
 }
 function frame(now) {
   const dt = Math.min(0.05, (now - state.last) / 1000); state.last = now;

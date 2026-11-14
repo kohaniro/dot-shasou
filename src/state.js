@@ -10,6 +10,9 @@ export const state = {
   nextJoint: 120, bobs: [], hits: [],
   // 進行（journey.js が書き換える）: phase 'run' | 'brake' | 'stop' | 'depart'、station は stations.js の駅オブジェクト
   phase: 'run', station: null, stopT: 0, door: 0, accel: 0,
-  rate: 1, // 再生速度（デバッグ用の早送り。1フレームに update() を rate 回くり返す。1 以外の間は音を止める）
+  // 線形（course.js）: curve −1..1（正 = 窓がカーブの外側）と elev 0..1（高架）は窓の中央の地点の値で、main.js の render() が書く。
+  // lean は curve をなめらかに追わせた値（つり革の傾き。journey.js が書く）
+  curve: 0, elev: 0, lean: 0,
+  rate: 1, // 再生速度（デバッグ用。1フレームに update() を rate 回くり返す。0 は停止。1 以外の間は音を止める）
   passMode: 'on' // 乗客の表示: 'on'（あり）| 'sil'（シルエット）| 'off'（なし）
 };

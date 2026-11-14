@@ -49,10 +49,12 @@ body{
 @media (max-width:480px){.spacer{display:none}}
 /* デバッグ用の行（URL に ?debug があるときだけ debug.js が hidden を外す） */
 .console[hidden]{display:none}
-.debug{font-size:13px;color:var(--muted);padding-block:5px}
-.debug button{padding:2px 10px}
-.debug .vol select{padding:1px 4px}
-.dbg-info{flex:1 1 20em;font-variant-numeric:tabular-nums}
+.debug{font-size:13px;color:var(--muted);padding-block:6px;flex-direction:column;align-items:stretch;gap:6px}
+.debug button{padding:3px 12px}
+.dbg-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.dbg-cap{min-width:2.5em}
+#dbg-rate button{min-width:3.4em}
+.dbg-info{font-variant-numeric:tabular-nums;min-height:2.8em}
 </style>
 
 <div class="top">
@@ -74,11 +76,24 @@ body{
 </div>
 
 <div class="console debug" id="debug" hidden>
-  <label class="vol" for="dbg-rate">早送り <select id="dbg-rate"><option value="1">×1</option><option value="2">×2</option><option value="4">×4</option><option value="8">×8</option></select></label>
-  <button id="dbg-biome" type="button">次のバイオームへ</button>
-  <button id="dbg-station" type="button">次の駅の手前へ</button>
-  <button id="dbg-tunnel" type="button">次のトンネルへ</button>
-  <button id="dbg-bridge" type="button">次の橋へ</button>
+  <div class="dbg-row" id="dbg-rate" role="group" aria-label="再生速度">
+    <span class="dbg-cap">速度</span>
+    <button type="button" data-rate="0" aria-pressed="false">停止</button>
+    <button type="button" data-rate="1" aria-pressed="true">×1</button>
+    <button type="button" data-rate="2" aria-pressed="false">×2</button>
+    <button type="button" data-rate="4" aria-pressed="false">×4</button>
+    <button type="button" data-rate="8" aria-pressed="false">×8</button>
+    <button type="button" data-rate="16" aria-pressed="false">×16</button>
+  </div>
+  <div class="dbg-row" id="dbg-jump" role="group" aria-label="移動">
+    <span class="dbg-cap">移動</span>
+    <button id="dbg-biome" type="button">次のバイオームへ</button>
+    <button id="dbg-station" type="button">次の駅の手前へ</button>
+    <button id="dbg-tunnel" type="button">次のトンネルへ</button>
+    <button id="dbg-bridge" type="button">次の橋へ</button>
+    <button id="dbg-curve" type="button">次のカーブへ</button>
+    <button id="dbg-elev" type="button">次の高架へ</button>
+  </div>
   <output id="dbg-info" class="dbg-info"></output>
 </div>
 

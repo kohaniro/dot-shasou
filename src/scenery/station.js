@@ -25,6 +25,8 @@ const clamp01 = v => Math.min(1, Math.max(0, v));
 const mod = (a, n) => ((a % n) + n) % n;
 
 const LINES = ['#3f9a5a', '#e58a3c', '#3f7fb5', '#c94f3f', '#7a5fa8', '#2f8f9a', '#d6a13a'];
+/* 路線の色（駅名標の帯、車体の帯）。シードごとに1色 */
+export const lineColor = () => LINES[hash32(state.seed, 42, 0) % LINES.length];
 const UND = '#7f8384', UND_D = '#6b6f71', BEAM = '#5c6062';          // 上屋の裏
 const FLOOR_SH = '#8a8882', FLOOR = '#b1aea4', FLOOR_OLD = '#a8a496'; // 床（上屋の下 / 日なた / 小さな駅）
 const BOARD = '#f6f5ee', BOARD_INK = '#1f2428', FRAME = '#4b5350', STEEL = '#8a8f8f';
@@ -74,7 +76,7 @@ function makePlan(st) {
   const base = Math.floor(st.pos * F), p0 = toL(st.x0), p1 = toL(st.x1);
   const col = n => base + 158 + BAY * n;
   const n0 = Math.ceil((p0 + 24 - col(0)) / BAY), n1 = Math.floor((p1 - 28 - col(0)) / BAY);
-  const line = LINES[hash32(state.seed, 42, 0) % LINES.length];
+  const line = lineColor();
   // 上屋: 規模が大きいほど長い。あるなら停車位置の窓は必ず屋根の下
   const nb = n1 - n0, rb = Math.min(nb - 2, Math.round(clamp01((s - 0.3) / 0.45) * nb)), q = r(); // 両端の1スパンほどは屋根なし
   let ra = 0, hasRoof = rb >= 2;

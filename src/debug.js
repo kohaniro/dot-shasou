@@ -2,7 +2,8 @@ import { W, state } from './state.js';
 import { world, BIOME_KEYS } from './world.js';
 import { stationAt } from './stations.js';
 import { featureNear, nextFeature } from './features.js';
-import { cruise, brakeDist, jumpTo } from './journey.js';
+import { nextCurve, nextElev, V_MAX } from './course.js';
+import { cruiseAt, brakeDist, jumpTo } from './journey.js';
 import { passengers } from './passengers.js';
 import { driveAudio, syncAudio } from './audio.js';
 
@@ -26,10 +27,10 @@ export function nextBiomePoint(c0) {
   }
   return bestD;
 }
-/* 次の駅の手前: 向かっている駅の減速が始まる地点のさらに AHEAD ドット手前（state.dist の値）。
+/* 次の駅の手前: 向かっている駅の減速が始まる地点（あり得る最高速度 V_MAX で走ってきた場合）のさらに AHEAD ドット手前（state.dist の値）。
    すでに過ぎている（減速中・停車中を含む）なら、その次の駅 */
 export function beforeStation() {
-  const at = st => st.pos - brakeDist(cruise(state.t)) - AHEAD;
+  const at = st => st.pos - brakeDist(V_MAX) - AHEAD;
   let st = state.station;
   if (state.phase === 'brake' || state.phase === 'stop' || state.dist >= at(st)) st = stationAt(st.k + 1);
   return at(st);
@@ -45,6 +46,14 @@ export function beforeFeature(type) {
   return f ? at(f) : null;
 }
 
+/* 次のカーブ・高架の手前: 始点 a が窓の中央に来る BEFORE ドット手前（state.dist の値）。すでにその地点を過ぎたものは飛ばす。無ければ null */
+export function beforeCourse(next) {
+  const at = c => c.a - W / 2 - BEFORE;
+  let c = next(state.dist + W / 2);
+  while (c && state.dist >= at(c) - 1) c = next(c.a + 1);
+  return c ? at(c) : null;
+}
+
 const FNAME = { tunnel: 'トンネル', bridge: '橋' };
 function featInfo(c) {
   const f = featureNear(c);
@@ -55,7 +64,9 @@ function featInfo(c) {
 function info() {
   const c = state.dist + W / 2, e = world(c), st = state.station, fi = featInfo(c);
   const ws = BIOME_KEYS.filter(k => e[k] >= 0.05).map(k => k + ' ' + e[k].toFixed(2)).join(' ');
-  return `距離 ${Math.floor(state.dist)} ／ ${ws} ／ ${state.phase} ${Math.round(state.speed * 0.36)}km/h` +
+  const sg = v => (v > 0 ? '+' : '') + v.toFixed(2);
+  return `距離 ${Math.floor(state.dist)} ／ ${ws} ／ ${state.phase} ${Math.round(state.speed * 0.36)}km/h（目標 ${Math.round(cruiseAt(state.dist, st ? st.pos : Infinity) * 0.36)}）` +
+    ` ／ curve ${sg(state.curve)} elev ${state.elev.toFixed(2)}` +
     (st ? ` ／ ${st.name} まで ${Math.max(0, Math.round(st.pos - state.dist))}` : '') + (fi ? ` ／ ${fi}` : '') + ` ／ 乗客 ${passengers.length}人`;
 }
 
@@ -67,16 +78,24 @@ export function initDebug(render) {
   row.hidden = false;
   const show = () => { const s = info(); if (s !== out.textContent) out.textContent = s; };
   const jump = d => { jumpTo(d); if (!state.playing) render(); show(); };
-  rateSel.addEventListener('change', () => {
-    state.rate = Math.max(1, parseInt(rateSel.value, 10) || 1);
-    if (state.rate === 1) driveAudio(true); // 早送り中は常時音を動かしていないので、戻すときに今の速度へ合わせる
+  // 再生速度のボタン（停止 = 0。停止中も描画は続くので、移動のボタンの結果はその場で見える）
+  const rateBtns = [...rateSel.querySelectorAll('button[data-rate]')];
+  const setRate = n => {
+    state.rate = n;
+    for (const b of rateBtns) b.setAttribute('aria-pressed', String(+b.dataset.rate === n));
+    if (n === 1) driveAudio(true); // 早送り・停止の間は常時音を動かしていないので、戻すときに今の速度へ合わせる
     syncAudio();
-  });
+  };
+  for (const b of rateBtns) b.addEventListener('click', () => setRate(+b.dataset.rate));
   document.getElementById('dbg-biome').addEventListener('click', () => jump(nextBiomePoint(state.dist + W / 2) - W / 2));
   document.getElementById('dbg-station').addEventListener('click', () => jump(beforeStation()));
   for (const type of ['tunnel', 'bridge']) {
     const b = document.getElementById('dbg-' + type);
     if (b) b.addEventListener('click', () => { const d = beforeFeature(type); if (d !== null) jump(d); });
+  }
+  for (const [id, next] of [['dbg-curve', nextCurve], ['dbg-elev', nextElev]]) {
+    const b = document.getElementById(id);
+    if (b) b.addEventListener('click', () => { const d = beforeCourse(next); if (d !== null) jump(d); });
   }
   let last = -1e9;
   show();
