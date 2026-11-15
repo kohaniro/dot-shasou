@@ -5,7 +5,7 @@ import { clouds, far, mid, near, track, plat, truss, xing, closewall, tunnel, la
 import { bridgeNear, poleOnBridge } from './scenery/bridge.js';
 import { tunnelNear, tunnelCovers, poleInTunnel, tunnelGlass } from './scenery/tunnel.js';
 import { drawCrossingNearLamps, crossingClose, poleOnCrossing } from './scenery/crossing.js';
-import { wallClose, poleOnWall } from './scenery/closewall.js';
+import { wallClose, poleOnWall, drawSelfReflection } from './scenery/closewall.js';
 import { drawDoorBackdrop } from './scenery/station.js';
 import { stationNear } from './stations.js';
 import { interior, drawInterior, drawStraps, drawDoors, doorShift, DOOR_W } from './interior.js';
@@ -128,7 +128,21 @@ function render() {
   // 踏切のこちら側の警報機・遮断機（架線より手前）。踏切の近くでだけ描く。灯の点滅は毎フレーム重ねる
   if (crossingClose(dist + W / 2)) { lay(xing); drawCrossingNearLamps(cx, dist, oy, t); }
   // 線路際ぎりぎりのビルの壁（架線より手前なので、壁の前では架線も隠れる）。至近の建物の近くでだけ描く
-  if (wallClose(dist + W / 2)) lay(closewall);
+  // 夜の度合い（トーンの外光の強さ sun から）。自車の映り込みとガラスの映り込みで使う
+  const dk = t => t ? 1 - t.sun : 0;
+  if (wallClose(dist + W / 2)) {
+    lay(closewall);
+    // 自車の映り込み: ガラスの棟の面に、自分の列車の側面（画面に止まって見える）。トーンごとに重み（クロスフェードの配分）をつけて重ねる
+    if (STYLE.glass) {
+      const off = Math.floor(viewOff(closewall));
+      for (const [tn, k] of [[tones.a, 1 - fadeK], [tones.b, fadeK]]) {
+        if (k <= 0) continue;
+        const prev = setTone(tn, closewall.air), n = dk(tn);
+        drawSelfReflection(cx, dist, off, oy + half(closewall.drop * el), k, n * n);
+        setTone(prev);
+      }
+    }
+  }
   // トンネルの壁と坑門（架線より手前）。トンネルの近くでだけ描く
   if (dark || tunnelNear(dist + W / 2)) lay(tunnel);
   // ガラスの映り込み
@@ -141,7 +155,7 @@ function render() {
     }
     cx.globalAlpha = 1;
     // トンネルの中と夜: 暗い窓に車内がうっすら映る。夜の度合いはトーンの外光の強さ sun から（切り替えの途中は間を取る）
-    const dk = t => t ? 1 - t.sun : 0, nightK = dk(tones.a) + (state.toneTo ? (dk(tones.b) - dk(tones.a)) * fadeK : 0);
+    const nightK = dk(tones.a) + (state.toneTo ? (dk(tones.b) - dk(tones.a)) * fadeK : 0);
     tunnelGlass(cx, dist, nightK * nightK);
   }
   // 雨: 窓ガラスの水滴と流れる筋（ガラスの面。車内と乗客はこの後に重ねるので、窓の開口部の中にだけ見える）

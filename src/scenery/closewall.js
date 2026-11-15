@@ -301,3 +301,59 @@ function stair(T, TE, o, w, k) {
   // 支柱
   T(side < 0 ? x1 - 3 : x0, 0, 3, FOOT + 2, dk);
 }
+
+/* ---------- 自車の映り込み（ガラスの棟の面に、自分の列車の側面がうっすら映る） ----------
+   main.js の render() が lay(closewall) の直後に毎フレーム呼ぶ（チャンクには焼き込まない）。自分の列車なので画面に対して止まって見え、
+   x は画面座標で固定、y だけ揺れ・カントの oy に合わせる（g.translate で半ドットのまま動かす）。重ねるのはガラスの棟の画面上の範囲
+   （層の通し座標 X0..X1 − off）と、腰壁より上（景色内 y < GROUND − 14）だけ。棟の端で途切れ、ほかの素材の棟・すき間には出ない。
+   縮尺は「ガラス面までの2倍の距離にある列車」なので本来は至近の壁の半分だが、それでは窓が小さすぎて列車に読めないので、壁よりわずかに小さい程度
+   （1両 20m = SELF.car 176 ドット ≈ 11cm/ドット。壁は階高 36〜40 ≈ 10cm/ドット）にし、窓の列が壁の中ほど（景色内 y 28〜39）を横一列に通る。
+   窓割りは車内（扉 x 0〜33 / 287〜319、窓 50〜158 / 162〜270、柱 158〜162）と同じ並び: 窓の中央の柱が x=160 に、
+   その両側の扉が 160 ± pd/2 に来る（自分の席は4枚扉の真ん中の区画）。
+   色: 車体・帯・下回りは R()（いまのトーンを通す）、夜の窓は RE()（灯り）。k はこのトーンの重み（クロスフェードの配分）、
+   night は夜の度合い（0 昼 〜 1 夜）。昼は暗い窓の列と車体がうっすら、夜は灯った窓の列が明るめに映り、車体は暗い */
+const SELF = {
+  pd: 44, car: 176, gap: 4, x0: 72,   // 扉の間隔、1両の長さ（扉4枚）、連結のすき間、自分の車両の左端（画面 x。扉が 138 と 182 に来る）
+  roof: 20, win: 28, winB: 39, band: 41, skirt: 54, under: 59,  // 景色内 y: 屋根、窓の上端・下端、帯、車体の下端、下回りの下端
+  dw: 12, dWin: [27, 42], ew: 8,      // 扉の幅、扉の窓の上下、両端の区画の小窓の幅
+  BODY: '#cdd2d2', ROOF: '#9ea4a6', BAND: '#2f6ea6', WIN: '#1d252d', UNDER: '#2a2d30', LIT: '#f2f4ea',
+  aBody: 0.15, aBand: 0.18, aWin: 0.22, aLit: 0.5   // 濃さ（globalAlpha）。昼の窓は aWin × (1 − night)、夜の窓は aLit × night
+};
+const GLASS_BOT = GROUND - 14;        // ガラスの下端（その下は石張りの腰壁）
+export function drawSelfReflection(g, dist, off, oy, k, night) {
+  const w = wallNear(dist + W / 2, REACH);
+  if (!w || !w.glass || k <= 0) return;
+  const ps = planOf(w), S = SELF, period = S.car + S.gap;
+  ps.forEach(o => {
+    if (o.mat !== 'glass') return;
+    const x0 = Math.max(0, o.X0 - off), x1 = Math.min(W, o.X1 - off);
+    if (x1 <= x0) return;
+    g.save(); g.translate(0, oy);
+    const pass = (a, c, fn, lit = false) => {
+      if (a <= 0) return;
+      g.globalAlpha = a;
+      const T = (x, y, ww, h) => { const l = Math.max(x, x0), r = Math.min(x + ww, x1), b = Math.min(y + h, GLASS_BOT); if (r > l && b > y) (lit ? RE : R)(g, l, y, r - l, b - y, c); };
+      for (let n = Math.floor((x0 - S.x0) / period) - 1, xc = S.x0 + n * period; xc < x1; n++, xc += period) fn(T, xc);
+    };
+    const doors = xc => [0, 1, 2, 3].map(i => xc + Math.round(S.pd * (i + 0.5)) - (S.dw >> 1));
+    // 窓の位置（扉の間の区画に2枚ずつ、両端の区画に小窓1枚）
+    const wins = (T, xc) => {
+      const d = doors(xc);
+      const ww = (S.pd - S.dw - 4) >> 1;   // 窓1枚の幅（区画の両端に1ドット、中央の柱に2ドット）
+      for (let i = 0; i < 3; i++) { const s = d[i] + S.dw; T(s + 1, S.win, ww, S.winB - S.win); T(s + 3 + ww, S.win, ww, S.winB - S.win); }
+      T(xc + 4, S.win, S.ew, S.winB - S.win); T(xc + S.car - 4 - S.ew, S.win, S.ew, S.winB - S.win);
+      for (const x of d) T(x + ((S.dw - 4) >> 1), S.dWin[0], 4, S.dWin[1] - S.dWin[0]);
+    };
+    // 車体（屋根の角は1ドット落とす）と扉の縁、下回り
+    pass(k * S.aBody, S.BODY, (T, xc) => { T(xc + 1, S.roof, S.car - 2, 1); T(xc, S.roof + 1, S.car, S.skirt - S.roof - 1); });
+    pass(k * S.aBody, S.ROOF, (T, xc) => { T(xc + 1, S.roof, S.car - 2, 2); for (const x of doors(xc)) { T(x, S.roof + 4, 1, S.skirt - S.roof - 4); T(x + S.dw - 1, S.roof + 4, 1, S.skirt - S.roof - 4); } });
+    pass(k * S.aBody, S.UNDER, (T, xc) => { T(xc, S.skirt - 1, S.car, 1); T(xc + 6, S.skirt, S.car - 12, 2); T(xc + 12, S.skirt + 2, 22, S.under - S.skirt - 2); T(xc + S.car - 34, S.skirt + 2, 22, S.under - S.skirt - 2); });
+    // 帯（扉の上は通さない）
+    pass(k * S.aBand, S.BAND, (T, xc) => { const d = doors(xc); let x = xc; for (const dx of d) { T(x, S.band, dx - x, 2); x = dx + S.dw; } T(x, S.band, xc + S.car - x, 2); });
+    // 窓: 昼は暗い窓、夜は灯った窓（灯りの色）
+    pass(k * S.aWin * (1 - night), S.WIN, wins);
+    pass(k * S.aLit * night, S.LIT, wins, true);
+    g.globalAlpha = 1;
+    g.restore();
+  });
+}
