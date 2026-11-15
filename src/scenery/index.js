@@ -19,7 +19,7 @@ export const plat = new Layer(6, PLAT_F, 256, drawPlatform); // 駅のホーム�
 export const truss = new Layer(7, TRUSS_F, 256, drawTruss); // トラス橋の鉄骨（架線より手前。橋の近くでだけ描く）
 export const tunnel = new Layer(8, TUN_F, 256, drawTunnel); // トンネルの壁と坑門（架線より手前。トンネルの近くでだけ描く）
 export const xing = new Layer(9, XING_F, 256, drawCrossingNear); // 踏切のこちら側の警報機・遮断機（架線より手前。踏切の近くでだけ描く）
-export const closewall = new Layer(10, WALL_F, 256, drawCloseWall); // 線路際ぎりぎりのビルの壁（線路際より手前・架線より奥。至近の建物の近くでだけ描く）
+export const closewall = new Layer(10, WALL_F, 256, drawCloseWall); // 線路際ぎりぎりのビルの壁（近景より手前・線路際より奥。至近の建物の近くでだけ描く）
 clouds.air = AIR.cloud; far.air = AIR.far; mid.air = AIR.mid; near.air = AIR.near; plat.air = AIR.lit; closewall.air = AIR.front; // 奥行きの区分（トーンの色変換用）
 // 天気の絵づくり（weather.js）: 地面の上端 gy、夜の濡れた地面に灯りを映す行数 refl、上の縁に雪を載せるか cap
 far.gy = 52; mid.gy = 59; near.gy = 68; track.gy = 72; mid.refl = 6; near.refl = 7;

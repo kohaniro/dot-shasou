@@ -101,8 +101,8 @@ function render() {
   // 雨脚と舞う雪は、層の間に3段で差し込む（奥は細かく、手前は長く速い。トンネルの壁・ホーム・トラスには隠れる）
   const fall = band => { if (state.wx.rain > 0 || state.wx.snow > 0) toned(() => drawFall(cx, band)); };
   lay(clouds);
-  lay(far); fall(0); lay(mid); lay(near); fall(1); lay(track);
-  // 線路際ぎりぎりのビルの壁（線路際より手前・架線より奥。架線と架線柱は壁の手前を通る）。至近の建物の近くでだけ描く
+  lay(far); fall(0); lay(mid); lay(near); fall(1);
+  // 線路際ぎりぎりのビルの壁（近景より手前・線路際より奥。線路際の側壁・フェンスと架線・架線柱は壁の手前に来る）。至近の建物の近くでだけ描く
   if (wallClose(dist + W / 2)) {
     lay(closewall);
     // 自車の映り込み: ガラスの棟の面に、自分の列車の側面（画面に止まって見える）。トーンごとに重み（クロスフェードの配分）をつけて重ねる
@@ -116,6 +116,7 @@ function render() {
       }
     }
   }
+  lay(track);
   // 踏切の赤い灯の点滅（線路際と同じ位置・同じ縦のずれで。画面に踏切があるときだけ）
   // 架線と架線柱（隣の線路）
   toned(() => {

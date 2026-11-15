@@ -206,7 +206,7 @@ const stub = (ls) => `(() => {
   };
   // 至近の建物（k 番目）の5コマ: 手前の端 a が窓の右から入ってくる所（a が画面 x=240）/ 窓いっぱい（a が x=20）/ 中ほどが窓の中央 / 出ていく所（b が x=60）/ 通過後（b が x=-200）
   window.__closewall = async (k) => {
-    const { st, cw } = await window.__mods(); const S = st.state, x = cw.wallNo(k), views = [], raws = [], info = [], F = 1.1;
+    const { st, cw } = await window.__mods(); const S = st.state, x = cw.wallNo(k), views = [], raws = [], info = [], F = 0.9;
     if (!x) return null;
     const at = (d, sx) => d - 160 - (sx - 160) / F; // 線路際の座標 d が、至近の層で画面 x=sx に来る state.dist
     for (const [tag, d] of [['enter', at(x.a, 240)], ['full', at(x.a, 20)], ['middle', (x.a + x.b) / 2 - 160], ['leave', at(x.b, 60)], ['passed', at(x.b, -200)]]) {
