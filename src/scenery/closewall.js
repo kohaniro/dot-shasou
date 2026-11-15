@@ -317,7 +317,8 @@ const SELF = {
   roof: 20, win: 28, winB: 39, band: 41, skirt: 54, under: 59,  // 景色内 y: 屋根、窓の上端・下端、帯、車体の下端、下回りの下端
   dw: 12, dWin: [27, 42], ew: 8,      // 扉の幅、扉の窓の上下、両端の区画の小窓の幅
   BODY: '#cdd2d2', ROOF: '#9ea4a6', BAND: '#2f6ea6', WIN: '#1d252d', UNDER: '#2a2d30', LIT: '#f2f4ea',
-  aBody: 0.15, aBand: 0.18, aWin: 0.22, aLit: 0.5   // 濃さ（globalAlpha）。昼の窓は aWin × (1 − night)、夜の窓は aLit × night
+  aBody: 0.15, aBand: 0.18, aWin: 0.22, aLit: 0.5,  // 濃さ（globalAlpha）。昼の窓は aWin × (1 − night)、夜の窓は aLit × night
+  litK: 0.12, blindK: 0.35, darkBoost: 0.8          // 区画ごとの倍率: 灯った区画 / ブラインドの所 / 暗い区画は夕方から強く（1 + darkBoost × √night）
 };
 const GLASS_BOT = GROUND - 14;        // ガラスの下端（その下は石張りの腰壁）
 export function drawSelfReflection(g, dist, off, oy, k, night) {
@@ -328,11 +329,30 @@ export function drawSelfReflection(g, dist, off, oy, k, night) {
     if (o.mat !== 'glass') return;
     const x0 = Math.max(0, o.X0 - off), x1 = Math.min(W, o.X1 - off);
     if (x1 <= x0) return;
+    // 映るのはガラスの区画（方立・スパンドレルの間）だけ。濃さは区画の明るさで変える: 中が暗い区画ほど強く映り、
+    // 灯った区画とブラインドの下りた所は中の明るさに負けてほとんど映らない（curtain() と同じ判定で区画ごとに決める）
+    const panes = [], boost = S.darkBoost * Math.sqrt(night);
+    o.slabs.forEach((ys, f) => {
+      const y0 = Math.max(0, ys + o.band), y1 = Math.min(FOOT, GLASS_BOT, ys + o.fh);
+      if (y1 <= y0) return;
+      for (let j = Math.max(0, Math.floor((x0 + off - o.X0) / o.bay)), x = o.X0 + j * o.bay; x - off < x1; j++, x += o.bay) {
+        const l = Math.max(x + 3 - off, x0), r = Math.min(Math.min(o.X1, x + o.bay) - off, x1);
+        if (r <= l) continue;
+        if (lit(w.h, 82, (f << 12) + j, 0.5 + 0.3 * hv(w.h, 83, f), 0.7) >= 0) { panes.push([l, y0, r, y1, S.litK]); continue; }
+        const q = hash32(o.h, 84, f * 1024 + j), bl = q % 5 === 0 ? Math.round((y1 - y0) * (0.3 + 0.4 * ((q >> 4) & 7) / 7)) : 0;
+        if (bl) panes.push([l, y0, r, y0 + bl, S.blindK]);
+        panes.push([l, y0 + bl, r, y1, 1 + boost]);
+      }
+    });
     g.save(); g.translate(0, oy);
     const pass = (a, c, fn, lit = false) => {
       if (a <= 0) return;
-      g.globalAlpha = a;
-      const T = (x, y, ww, h) => { const l = Math.max(x, x0), r = Math.min(x + ww, x1), b = Math.min(y + h, GLASS_BOT); if (r > l && b > y) (lit ? RE : R)(g, l, y, r - l, b - y, c); };
+      const T = (x, y, ww, h) => {
+        for (const [pl, pt, pr, pb, pk] of panes) {
+          const l = Math.max(x, pl), r = Math.min(x + ww, pr), t = Math.max(y, pt), b = Math.min(y + h, pb);
+          if (r > l && b > t) { g.globalAlpha = Math.min(1, a * pk); (lit ? RE : R)(g, l, t, r - l, b - t, c); }
+        }
+      };
       for (let n = Math.floor((x0 - S.x0) / period) - 1, xc = S.x0 + n * period; xc < x1; n++, xc += period) fn(T, xc);
     };
     const doors = xc => [0, 1, 2, 3].map(i => xc + Math.round(S.pd * (i + 0.5)) - (S.dw >> 1));
