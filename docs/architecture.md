@@ -4,7 +4,7 @@
 
 ## 状態とモジュールの依存
 
-- **モジュールの依存方向**: `state.js`（何も import しない。画面寸法の定数と共有の可変状態 `state`）← `rng.js` ← `world.js` / `palette.js` （`clock.js` は `world.js` の隣、`lights.js` は `palette.js` の次、`tone.js` は `scenery/index.js` の次、`weather.js` は `layers.js` の後）← `stations.js`（駅データ）← `features.js`（トンネル・橋の位置）← `course.js`（線形: カーブ・高架・制限速度）← `crossings.js`（踏切の位置）← `layers.js` ← `scenery/*` ← `scenery/index.js`（レイヤーの実体 `layers`）← `journey.js`（進行。`stations.js` と `audio.js` を使う。`audio.js` は `features.js` を使う）← `ui.js` ← `main.js`。循環 import を作らないこと。`ui.js` は `main.js` を import せず、`render` / `rebuild` は `initUI(render, rebuild)` で受け取る。
+- **モジュールの依存方向**: `state.js`（何も import しない。画面寸法の定数と共有の可変状態 `state`）← `rng.js` ← `world.js` / `palette.js` （`clock.js` は `world.js` の隣、`lights.js` は `palette.js` の次、`tone.js` は `scenery/index.js` の次、`weather.js` は `layers.js` の後）← `stations.js`（駅データ）← `features.js`（トンネル・橋の位置）← `course.js`（線形: カーブ・高架・制限速度）← `crossings.js`（踏切の位置）← `closewalls.js`（至近の建物の位置）← `layers.js` ← `scenery/*` ← `scenery/index.js`（レイヤーの実体 `layers`）← `journey.js`（進行。`stations.js` と `audio.js` を使う。`audio.js` は `features.js` を使う）← `ui.js` ← `main.js`。循環 import を作らないこと。`ui.js` は `main.js` を import せず、`render` / `rebuild` は `initUI(render, rebuild)` で受け取る。
 - **共有状態の書き換え**: `seed`・`dist`・`t`・`speed` などは `state.xxx` として読み書きする。`STYLE`（`palette.js`）と音の状態（`audio.js`）は `export let` なので、外からは `setStyle()` / `setSoundOn()` / `setVolume()` 経由で変える。
 
 ## 決定的生成
@@ -13,7 +13,7 @@
 
 ## 視差レイヤー
 
-- **視差レイヤー `Layer`**: 横 256 ドットのチャンクを生成してキャッシュし、視差係数でスクロール。雲 0.012 / 遠景 0.09 / 中景 0.28 / 近景 0.6 / 線路際 1.0 / 架線 1.2（架線だけ `main.js` の `render()` で毎フレーム直接描画）/ ホーム 1.5（駅の近くでだけ描く）/ トラス 1.6（橋の近くでだけ）/ 踏切の至近の層 1.6（踏切の近くでだけ）/ トンネルの壁 1.7（トンネルの近くでだけ）。シード変更時は `setSeed()`（`ui.js`）、絵柄変更時は `rebuild()`（`main.js`）で全キャッシュを破棄する。
+- **視差レイヤー `Layer`**: 横 256 ドットのチャンクを生成してキャッシュし、視差係数でスクロール。雲 0.012 / 遠景 0.09 / 中景 0.28 / 近景 0.6 / 線路際 1.0 / 架線 1.2（架線だけ `main.js` の `render()` で毎フレーム直接描画）/ ホーム 1.5（駅の近くでだけ描く）/ トラス 1.6（橋の近くでだけ）/ 踏切の至近の層 1.6（踏切の近くでだけ）/ 至近の建物 1.4（建物の近くでだけ）/ トンネルの壁 1.7（トンネルの近くでだけ）。シード変更時は `setSeed()`（`ui.js`）、絵柄変更時は `rebuild()`（`main.js`）で全キャッシュを破棄する。
 
 ## 線形（カーブ・高架・速度）
 
@@ -44,10 +44,17 @@
 - **警報音**（`audio.js`）: 矩形波＋ずらした倍音2本を `rate`（2.5 打/秒）で打ち、`decay` 0.2 秒で減衰させる。`driveCrossing()`（`driveAudio` の最後）が席の位置で `crossingAt` を引き、純粋な関数 `crossingSound(x, v)` で音量（`1/(1+(x/r0)²)` を範囲の端で 0 に）と音程（横のずれ `side` 60・音速 `c` 3400 のドップラー。近づくと約 7% 高く、通過で連続に下がる）を決める。早送り中・トンネルの中・高架や勾配の上（`state.elev`）では鳴らさない。定数は `VOL.crossing` / `CROSSING`（`range` は `XING_HEAR` とそろえる）。
 - **確認**: `shots` の `xing`（一覧と重なりの検証）/ `crossing[:k,k]`（窓の右寄り・至近の層が窓に入った所・中央・至近の層が出ていく所・通過後の5地点）mode、`?debug` の「次の踏切へ」。
 
+## 至近の建物
+
+- **位置**（`closewalls.js`）: 踏切と同じく別の表。`FRAME`（4500 ドット）の枠ごとに `rng(hash32(seed, 88, k))` を必ず5回引く（置くか・位置・長さ 150〜500・`h`・`glass`）。出現率は中心の重み（都心 0.9 / 住宅街 0.1 / ほか 0）。駅 500・橋/トンネル 600・踏切 400・高架と勾配 400・前の件 2500 以内と出発直後（d < 2000）には置かない（ずらさず諦める）。1件は `{ n, a, b, len, h, glass, bldgs }`、`bldgs` は棟ごとの `{ a, b, mat, gap }`（`mat` は tile / concrete / panel / glass。棟割りは `hash32(h, 71/72)`）。`glass` が真なら棟の1つだけがカーテンウォールになる（次の「自車の映り込み」はこの棟の範囲を見る）。引くのは `wallsIn` / `wallNear` / `nextWall` / `wallNo`。
+- **絵**（`scenery/closewall.js`、`closewall` 層 id 10、視差 `WALL_F` = 1.4、pan 0 / drop 0、`air` は `AIR.front`）: 棟の計画は `hash32(h, 73, 棟)`、模様は通し座標で決める（チャンクの `r` は使わない）。階高 30〜37（ガラス 36〜40）で窓の高さに2〜3階、1階の床 y=82。素材ごとに窓・設備を大ぶりに描き、縦樋・非常階段・端の影の面、棟のすき間（暗い路地か奥が見えるすき間）を入れる。夜の灯りは `win()` を使わず（チャンクをまたぐ窓が半分だけ灯るため）独自の `lit()`（`hash32(h, 80〜85, 窓の番号)` としきい値）で `RE()` で描く。
+- **描画**: `render()` が `wallClose(d)`（`REACH` 135 以内）のときだけ、踏切の至近の層の後・トンネルの壁の前に描く。壁は不透明なので架線の線も隠れる。架線柱は件の前後 30 以内に立てない（`poleOnWall`）。
+- **確認**: `shots` の `wall`（一覧と重なりの検証）/ `closewall[:k,k]`（5コマ＋継ぎ目の検証）mode、`?debug` の「次の至近の建物へ」。
+
 ## 絵柄と描画の重ね順
 
 - **絵柄の仕組み**: 色はすべて `R()`（矩形描画）内で `P(color)` を通り、`STYLES[*].pal` が色を差し替える（結果は `palCache`）。**新しい描画コードも必ず `R()` か `P()` を通すこと**。直接 `fillStyle` を設定すると絵柄切り替えに追従しない。`outline`（輪郭線 `ink()`）と `glass`（窓の映り込み）も絵柄ごとのフラグ。
-- **描画の重ね順**: 空 → 各レイヤー → 架線 → ホーム → トラス → 踏切の至近の層とその灯 → トンネルの壁 → ガラスの映り込み → 車内（`drawInterior()` で別キャンバスに一度だけ描き、窓を `clearRect` で抜いたもの）→ ドアの外の描き足し・扉（`drawDoors(g, state.door)`、毎フレーム）→ つり革・乗客（毎フレーム描画）。
+- **描画の重ね順**: 空 → 各レイヤー → 架線 → ホーム → トラス → 踏切の至近の層とその灯 → 至近の建物 → トンネルの壁 → ガラスの映り込み → 車内（`drawInterior()` で別キャンバスに一度だけ描き、窓を `clearRect` で抜いたもの）→ ドアの外の描き足し・扉（`drawDoors(g, state.door)`、毎フレーム）→ つり革・乗客（毎フレーム描画）。
 
 ## 駅と乗客
 

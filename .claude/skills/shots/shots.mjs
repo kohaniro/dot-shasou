@@ -1,6 +1,6 @@
 // 指定シード・絵柄で、各バイオームの中心と遷移の途中の景色を PNG に保存する（ヘッドレス Chrome を CDP で操作。依存なし）
 // 使い方: node shots.mjs <outDir> <seed,seed> <style,style> [mode]
-//   mode: both（既定） | raw | view | run | perf | pano:<距離,距離> | at:<距離,距離> | zoom:<距離,距離> | station[:<k,k>] | door[:<k,k>] | journey[:<秒>] | pass | walk | swap[:<k,k>] | feat | tunnel[:<k,k>] | bridge[:<k,k>] | xing | crossing[:<k,k>]
+//   mode: both（既定） | raw | view | run | perf | pano:<距離,距離> | at:<距離,距離> | zoom:<距離,距離> | station[:<k,k>] | door[:<k,k>] | journey[:<秒>] | pass | walk | swap[:<k,k>] | feat | tunnel[:<k,k>] | bridge[:<k,k>] | xing | crossing[:<k,k>] | wall | closewall[:<k,k>]
 //         | course | curve[:<k,k>] | elev[:<k,k>] | clock | tod[:<距離,距離>] | wx[:<距離,距離>] | tonerun[:<秒>]
 //         | gif:<開始距離>（README 用の GIF。SHOTS_GIF_SECS 既定8 / SHOTS_GIF_FPS 既定20 / SHOTS_GIF_SCALE 既定1）
 //   時間帯・天気は、既定では昼・晴に固定して撮る。環境変数 SHOTS_TOD=auto|dawn|noon|dusk|night|<時刻> と SHOTS_WX=auto|clear|cloud|rain|snow で変える（auto = 走行距離から決まる値。cloud:0.5 のように強さも付けられる）
@@ -67,7 +67,7 @@ const stub = (ls) => `(() => {
   localStorage.clear(); for (const k in ls) localStorage.setItem(k, ls[k]);
   window.__step = (n, ms) => { for (let i = 0; i < n; i++) { now += ms; const c = q.splice(0); for (const f of c) f(now); } return q.length; };
   window.__mods = async () => {
-    if (!window.__m) window.__m = { st: await import('/src/state.js'), w: await import('/src/world.js'), sc: await import('/src/scenery/index.js'), sky: await import('/src/scenery/sky.js'), j: await import('/src/journey.js'), sn: await import('/src/stations.js'), ck: await import('/src/clock.js'), tn: await import('/src/tone.js'), ft: await import('/src/features.js'), co: await import('/src/course.js'), xg: await import('/src/crossings.js'), ly: await import('/src/layers.js') };
+    if (!window.__m) window.__m = { st: await import('/src/state.js'), w: await import('/src/world.js'), sc: await import('/src/scenery/index.js'), sky: await import('/src/scenery/sky.js'), j: await import('/src/journey.js'), sn: await import('/src/stations.js'), ck: await import('/src/clock.js'), tn: await import('/src/tone.js'), ft: await import('/src/features.js'), co: await import('/src/course.js'), xg: await import('/src/crossings.js'), cw: await import('/src/closewalls.js'), ly: await import('/src/layers.js') };
     return window.__m;
   };
   // 最初の1周について、各バイオームの中心と遷移の中間の距離を求める
@@ -174,6 +174,51 @@ const stub = (ls) => `(() => {
       const q = xg.crossingAt(S.dist + 160);
       info.push(tag + ' dist=' + S.dist.toFixed(1) + ' phase=' + S.phase + ' speed=' + S.speed.toFixed(1) + ' crossingAt(center)=' + (q ? 'x ' + q.x.toFixed(1) + ' #' + q.xing.n : 'null'));
     }
+    return { x, views, raws, info };
+  };
+  // 至近距離の建物（closewalls.js）の一覧と検証（d = 0〜dMax）: 件数、都心の区間あたりの頻度、間隔・長さ、バイオーム、駅・橋/トンネル・踏切・高架との重なり
+  window.__wall = async (dMax) => {
+    const { w, sn, ft, co, xg, cw } = await window.__mods(); const ws = cw.wallsIn(0, dMax), rows = [], bio = {}, mats = {}, bad = { station: 0, feature: 0, crossing: 0, elev: 0, start: 0, order: 0 };
+    const gaps = [], lens = []; let glass = 0;
+    ws.forEach((x, i) => {
+      const e = w.world((x.a + x.b) / 2), top = w.BIOME_KEYS.reduce((a, k) => e[k] > e[a] ? k : a, 'city');
+      bio[top] = (bio[top] || 0) + 1; lens.push(x.len); if (x.glass) glass++;
+      for (const b of x.bldgs) mats[b.mat] = (mats[b.mat] || 0) + 1;
+      if (i > 0) { gaps.push(x.a - ws[i - 1].b); if (x.a <= ws[i - 1].b) bad.order++; }
+      // 窓に同時に入りうる範囲で見る（至近の建物は中央 ±115、ホーム ±160、トンネルの壁 240、トラス 130、踏切の至近の層 170）
+      if (sn.stationsIn(x.a - 300, x.b + 300).length) bad.station++;
+      if (ft.featureNear((x.a + x.b) / 2, x.len / 2 + 360)) bad.feature++;
+      if (xg.crossingNear((x.a + x.b) / 2, x.len / 2 + 290)) bad.crossing++;
+      let el = false; for (let d = x.a - 300; d <= x.b + 300; d += 5) if (co.elev(d) > 0) el = true;
+      if (el) bad.elev++; if (x.a < 2000) bad.start++;
+      const s = sn.nextStation(x.a - 160), sp = sn.prevStation(x.a - 160);
+      const sd = Math.min(...[s, sp].filter(Boolean).map(q => Math.max(0, q.x0 - x.b, x.a - q.x1)));
+      rows.push(['wall', '#' + x.n, 'a=' + x.a, 'b=' + x.b, 'len=' + x.len, 'h=' + x.h, x.glass ? 'glass' : '-', '[' + x.bldgs.map(b => b.mat + (b.gap ? '/' + b.gap : '')).join(' ') + ']', i ? 'gap ' + gaps[gaps.length - 1] : 'first', top + ' ' + e[top].toFixed(2), 'station ' + sd].join('  '));
+    });
+    // 都心（city >= 0.5）の区間の長さと、制限速度で走ったときの秒数
+    let cityD = 0, cityT = 0, inCity = 0; const step = 50;
+    for (let d = 0; d < dMax; d += step) { const e = w.world(d); if (e.city >= 0.5) { cityD += step; cityT += step / Math.max(60, co.speedLimit(d)); } }
+    for (const x of ws) if (w.world((x.a + x.b) / 2).city >= 0.5) inCity++;
+    const avg = a => a.length ? Math.round(a.reduce((p, q) => p + q, 0) / a.length) : '-';
+    return { rows, sum: 'count ' + ws.length + '（都心の中 ' + inCity + '）  glass ' + glass + '  city distance ' + cityD + '（制限速度で ' + cityT.toFixed(0) + ' 秒）  都心で ' + (inCity ? (cityT / inCity).toFixed(0) : '-') + ' 秒に1件（' + (inCity ? Math.round(cityD / inCity) : '-') + ' ドットに1件）' +
+      '  gap mean ' + avg(gaps) + ' min ' + (gaps.length ? Math.min(...gaps) : '-') + '  len mean ' + avg(lens) + ' min ' + (lens.length ? Math.min(...lens) : '-') + ' max ' + (lens.length ? Math.max(...lens) : '-') + '  biome ' + JSON.stringify(bio) + '  mat ' + JSON.stringify(mats),
+      bad: 'overlaps: station ' + bad.station + ' feature ' + bad.feature + ' crossing ' + bad.crossing + ' elev ' + bad.elev + ' start ' + bad.start + ' order ' + bad.order };
+  };
+  // 至近の建物（k 番目）の5コマ: 手前の端 a が窓の右から入ってくる所（a が画面 x=240）/ 窓いっぱい（a が x=20）/ 中ほどが窓の中央 / 出ていく所（b が x=60）/ 通過後（b が x=-200）
+  window.__closewall = async (k) => {
+    const { st, cw } = await window.__mods(); const S = st.state, x = cw.wallNo(k), views = [], raws = [], info = [], F = 1.4;
+    if (!x) return null;
+    const at = (d, sx) => d - 160 - (sx - 160) / F; // 線路際の座標 d が、至近の層で画面 x=sx に来る state.dist
+    for (const [tag, d] of [['enter', at(x.a, 240)], ['full', at(x.a, 20)], ['middle', (x.a + x.b) / 2 - 160], ['leave', at(x.b, 60)], ['passed', at(x.b, -200)]]) {
+      await window.__goto(d); views.push(window.__view()); raws.push(await window.__raw(S.dist, 480, 2));
+      info.push(tag + ' dist=' + S.dist.toFixed(1) + ' phase=' + S.phase + ' speed=' + S.speed.toFixed(1) + ' near=' + !!cw.wallNear(S.dist + 160, 135));
+    }
+    // チャンクの継ぎ目: 同じ範囲をチャンク幅 256（本物）と 61 で描いて重ね、違う画素の数を数える（0 であること）
+    const { sc, ly, tn } = await window.__mods(); tn.snapToneAt(S.dist);
+    const L1 = sc.closewall, L2 = new ly.Layer(L1.id, L1.f, 61, L1.draw), X0 = Math.round((x.a - 160) * F + 160) - 40, X1 = Math.round((x.b - 160) * F + 160) + 40;
+    const comp = L => { const c = document.createElement('canvas'); c.width = X1 - X0; c.height = 80; const g = c.getContext('2d'); for (let i = Math.floor(X0 / L.cw); i * L.cw < X1; i++) g.drawImage(L.chunk(i), i * L.cw - X0, 0); return g.getImageData(0, 0, c.width, 80).data; };
+    const d1 = comp(L1), d2 = comp(L2); let diff = 0; for (let q = 0; q < d1.length; q += 4) if (d1[q] !== d2[q] || d1[q + 1] !== d2[q + 1] || d1[q + 2] !== d2[q + 2] || d1[q + 3] !== d2[q + 3]) diff++;
+    info.push('seam check (chunk 256 vs 61): ' + diff + ' px differ');
     return { x, views, raws, info };
   };
   // 線形（course.js）の一覧と検証（d = 0〜dMax）: カーブ、向きの範囲、傾きの最大、高架、制限速度、実際に走らせた駅間ごとの最高速度
@@ -472,6 +517,19 @@ for (const seed of seedArg.split(',')) for (const style of styleArg.split(',')) 
         if (pass === 0) console.log([`  crossing ${k}: #${r.x.n} c=${r.x.c} a=${r.x.a} b=${r.x.b} w=${r.x.w} h=${r.x.h}`, ...r.info].join('\n    '));
         h.push(save(`crossing-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.views)})`)));
         h.push(save(`crossing-raw-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.raws)})`)));
+      }
+    } else if (mode === 'wall') { // 至近の建物の一覧と検証（画像なし）
+      const r = await pg.ev('__wall(260000)');
+      if (pass === 0) console.log(['', ...r.rows, r.sum, r.bad].join('\n  ').slice(1));
+      h.push(crypto.createHash('sha256').update(r.rows.join(';')).digest('hex').slice(0, 12));
+    } else if (/^closewall(:|$)/.test(mode)) { // 至近の建物の k 番目ごとに5コマ
+      const arg = mode.split(':')[1], ks = arg ? arg.split(',').map(Number) : [1, 2];
+      for (const k of ks) {
+        const r = await pg.ev(`__closewall(${k})`);
+        if (!r) { if (pass === 0) console.log(`  closewall ${k}: 見つからない`); continue; }
+        if (pass === 0) console.log([`  closewall ${k}: #${r.x.n} a=${r.x.a} b=${r.x.b} len=${r.x.len} glass=${r.x.glass} h=${r.x.h} [${r.x.bldgs.map(b => b.mat).join(' ')}]`, ...r.info].join('\n    '));
+        h.push(save(`closewall-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.views)})`)));
+        h.push(save(`closewall-raw-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.raws)})`)));
       }
     } else if (mode === 'clock') { // 時刻・天気の一覧と検証（画像なし）
       const r = await pg.ev('__clock(450000)');
