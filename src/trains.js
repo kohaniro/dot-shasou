@@ -25,7 +25,7 @@ const SALT_TRAIN = 9401; // hash32(seed, SALT_TRAIN, 枠の番号)。31, 77, 78,
 const FRAME = 5000;      // 枠の長さ
 const START = 3000;      // これより手前（出発直後）には置かない
 const P = { city: 0.8, resi: 0.75, suburb: 0.5, rural: 0.25, mount: 0.06, sea: 0.06 }; // 枠ごとの出現率（中心の重みで混ぜる）
-const CARS = [2, 8];     // 両数の範囲（等確率。巡航 230 で通過は約 1.9〜6.2 秒）
+const CARS = [2, 6];     // 両数の範囲（等確率。巡航 230 で通過は約 1.9〜4.8 秒。8 両は長すぎるとユーザーの指摘）
 const V_MIN = 165;       // 見込んだ速さがこれより遅い所（きついカーブの前後）には置かない
 /* 駅: 停車位置 pos（state.dist）の手前 brake(v)・後ろ after(v) の区間に、列車が窓に見えている state.dist が入ったら置かない。
    journey.js は import できない（循環）ので、減速度・加速度の近似の式で（shots の journey mode で測った値: 巡航 230 で減速の開始は 4200〜4700 手前、
