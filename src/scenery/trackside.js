@@ -8,6 +8,7 @@ import { mountSeg } from './mountain.js';
 import { bridgeTrack } from './bridge.js';
 import { tunnelTrack } from './tunnel.js';
 import { viaductTrack } from './viaduct.js';
+import { crossingTrack } from './crossing.js';
 
 /* ---------- trackside: 線路際の地面。都心は壁・フェンス、住宅街は生垣、郊外・田園は草地・柵・用水路・あぜ道 ---------- */
 function wall(g, r, x, len) {
@@ -88,4 +89,5 @@ export function drawTrackside(g, i, r, L) {
   viaductTrack(g, L, i); // 高架・勾配のある地点: 盛土・擁壁・高欄（その列だけ既存の絵を消して描き直す。橋・トンネルとは重ならない）
   bridgeTrack(g, L, i); // 橋のある地点: 取り付け・橋台・桁（既存の絵の上から描き直す）
   tunnelTrack(g, L, i); // トンネルのある地点: 切り通し・坑門・くぐる山（既存の絵の上から描き直す）
+  crossingTrack(g, L, i); // 踏切のある地点: 路面・警報機・遮断機・待つ車（その範囲の既存の絵を消して描き直す。チャンクの乱数は使わない）
 }

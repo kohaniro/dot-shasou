@@ -12,6 +12,7 @@ import { seaFar, farWet, seaMidWater, seaMid, seaNearWater, seaNear, seaGroundMi
 import { farRange, farRidge, midSlope, midMount, mountGround, nearBank, nearMount } from './mountain.js';
 import { riverBand } from './bridge.js';
 import { tunnelHill } from './tunnel.js';
+import { crossingBand } from './crossing.js';
 
 /* ---------- 遠景・中景・近景: world() の連続値を見て、各バイオームの部品を並べる ---------- */
 
@@ -112,6 +113,7 @@ export function drawMid(g, i, r, L) {
     x += w + (r() < 0.4 ? ri(r, 1, 2) : 0);
   }
   riverBand(g, L, i);
+  crossingBand(g, L, i); // 踏切のある地点: 道を奥へ通す（既存の絵の上から描き直す。チャンクの乱数は使わない）
   tunnelHill(g, L, i);
 }
 
@@ -149,5 +151,6 @@ export function drawNear(g, i, r, L) {
     x += w + (r() < 0.35 ? ri(r, 1, 2) : 0);
   }
   riverBand(g, L, i);
+  crossingBand(g, L, i);
   tunnelHill(g, L, i);
 }

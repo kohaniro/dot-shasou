@@ -3,6 +3,7 @@ import { world, BIOME_KEYS } from './world.js';
 import { stationAt } from './stations.js';
 import { featureNear, nextFeature } from './features.js';
 import { nextCurve, nextElev, V_MAX } from './course.js';
+import { crossingNear, nextCrossing } from './crossings.js';
 import { TOD, DAWN, DUSK, nextTimePoint, nextWeatherPoint } from './clock.js';
 import { cruiseAt, brakeDist, jumpTo } from './journey.js';
 import { passengers } from './passengers.js';
@@ -47,7 +48,7 @@ export function beforeFeature(type) {
   return f ? at(f) : null;
 }
 
-/* 次のカーブ・高架の手前: 始点 a が窓の中央に来る BEFORE ドット手前（state.dist の値）。すでにその地点を過ぎたものは飛ばす。無ければ null */
+/* 次のカーブ・高架・踏切の手前: 始点 a が窓の中央に来る BEFORE ドット手前（state.dist の値）。すでにその地点を過ぎたものは飛ばす。無ければ null */
 export function beforeCourse(next) {
   const at = c => c.a - W / 2 - BEFORE;
   let c = next(state.dist + W / 2);
@@ -62,6 +63,12 @@ function featInfo(c) {
   const n = nextFeature(c);
   return n ? `次は ${FNAME[n.type]}${n.n} まで ${Math.round(n.a - c)}` : '';
 }
+function xingInfo(c) {
+  const x = crossingNear(c);
+  if (x) return `踏切${x.n} の上`;
+  const n = nextCrossing(c);
+  return n ? `踏切${n.n} まで ${Math.round(n.a - c)}` : '';
+}
 /* 次の夕方・朝・天気の変わり目の手前: 移り変わりが始まる地点が窓の中央に来る BEFORE ドット手前（state.dist の値）。固定は見ない本来の時刻・天気で探す */
 export const beforeTime = hour => nextTimePoint(state.dist + W / 2 + BEFORE + 1, hour) - W / 2 - BEFORE;
 export function beforeWeather() { const d = nextWeatherPoint(state.dist + W / 2 + BEFORE + 1); return d === null ? null : d - W / 2 - BEFORE; }
@@ -72,12 +79,12 @@ function toneInfo() {
     (tn ? ` ／ トーン ${tn.key}` + (state.toneTo ? ` → ${state.toneTo.key} ${Math.round(state.toneK * 100)}%` : '') : '');
 }
 function info() {
-  const c = state.dist + W / 2, e = world(c), st = state.station, fi = featInfo(c);
+  const c = state.dist + W / 2, e = world(c), st = state.station, fi = featInfo(c), xi = xingInfo(c);
   const ws = BIOME_KEYS.filter(k => e[k] >= 0.05).map(k => k + ' ' + e[k].toFixed(2)).join(' ');
   const sg = v => (v > 0 ? '+' : '') + v.toFixed(2);
   return `距離 ${Math.floor(state.dist)} ／ ${ws} ／ ${state.phase} ${Math.round(state.speed * 0.36)}km/h（目標 ${Math.round(cruiseAt(state.dist, st ? st.pos : Infinity) * 0.36)}）` +
     ` ／ curve ${sg(state.curve)} elev ${state.elev.toFixed(2)}` +
-    (st ? ` ／ ${st.name} まで ${Math.max(0, Math.round(st.pos - state.dist))}` : '') + (fi ? ` ／ ${fi}` : '') + ` ／ 乗客 ${passengers.length}人 ／ ${toneInfo()}`;
+    (st ? ` ／ ${st.name} まで ${Math.max(0, Math.round(st.pos - state.dist))}` : '') + (fi ? ` ／ ${fi}` : '') + (xi ? ` ／ ${xi}` : '') + ` ／ 乗客 ${passengers.length}人 ／ ${toneInfo()}`;
 }
 
 /* 初期化。デバッグ表示が有効なら、毎フレーム呼ぶ関数 tick(now) を返す（表示の更新は 0.25 秒に1回） */
@@ -103,7 +110,7 @@ export function initDebug(render) {
     const b = document.getElementById('dbg-' + type);
     if (b) b.addEventListener('click', () => { const d = beforeFeature(type); if (d !== null) jump(d); });
   }
-  for (const [id, next] of [['dbg-curve', nextCurve], ['dbg-elev', nextElev]]) {
+  for (const [id, next] of [['dbg-curve', nextCurve], ['dbg-elev', nextElev], ['dbg-xing', nextCrossing]]) {
     const b = document.getElementById(id);
     if (b) b.addEventListener('click', () => { const d = beforeCourse(next); if (d !== null) jump(d); });
   }

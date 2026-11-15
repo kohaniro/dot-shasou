@@ -4,7 +4,7 @@
 
 ## 状態とモジュールの依存
 
-- **モジュールの依存方向**: `state.js`（何も import しない。画面寸法の定数と共有の可変状態 `state`）← `rng.js` ← `world.js` / `palette.js` （`clock.js` は `world.js` の隣、`lights.js` は `palette.js` の次、`tone.js` は `scenery/index.js` の次、`weather.js` は `layers.js` の後）← `stations.js`（駅データ）← `features.js`（トンネル・橋の位置）← `course.js`（線形: カーブ・高架・制限速度）← `layers.js` ← `scenery/*` ← `scenery/index.js`（レイヤーの実体 `layers`）← `journey.js`（進行。`stations.js` と `audio.js` を使う。`audio.js` は `features.js` を使う）← `ui.js` ← `main.js`。循環 import を作らないこと。`ui.js` は `main.js` を import せず、`render` / `rebuild` は `initUI(render, rebuild)` で受け取る。
+- **モジュールの依存方向**: `state.js`（何も import しない。画面寸法の定数と共有の可変状態 `state`）← `rng.js` ← `world.js` / `palette.js` （`clock.js` は `world.js` の隣、`lights.js` は `palette.js` の次、`tone.js` は `scenery/index.js` の次、`weather.js` は `layers.js` の後）← `stations.js`（駅データ）← `features.js`（トンネル・橋の位置）← `course.js`（線形: カーブ・高架・制限速度）← `crossings.js`（踏切の位置）← `layers.js` ← `scenery/*` ← `scenery/index.js`（レイヤーの実体 `layers`）← `journey.js`（進行。`stations.js` と `audio.js` を使う。`audio.js` は `features.js` を使う）← `ui.js` ← `main.js`。循環 import を作らないこと。`ui.js` は `main.js` を import せず、`render` / `rebuild` は `initUI(render, rebuild)` で受け取る。
 - **共有状態の書き換え**: `seed`・`dist`・`t`・`speed` などは `state.xxx` として読み書きする。`STYLE`（`palette.js`）と音の状態（`audio.js`）は `export let` なので、外からは `setStyle()` / `setSoundOn()` / `setVolume()` 経由で変える。
 
 ## 決定的生成
@@ -13,7 +13,7 @@
 
 ## 視差レイヤー
 
-- **視差レイヤー `Layer`**: 横 256 ドットのチャンクを生成してキャッシュし、視差係数でスクロール。雲 0.012 / 遠景 0.09 / 中景 0.28 / 近景 0.6 / 線路際 1.0 / 架線 1.2（架線だけ `main.js` の `render()` で毎フレーム直接描画）/ ホーム 1.5（駅の近くでだけ描く）/ トラス 1.6（橋の近くでだけ）/ トンネルの壁 1.7（トンネルの近くでだけ）。シード変更時は `setSeed()`（`ui.js`）、絵柄変更時は `rebuild()`（`main.js`）で全キャッシュを破棄する。
+- **視差レイヤー `Layer`**: 横 256 ドットのチャンクを生成してキャッシュし、視差係数でスクロール。雲 0.012 / 遠景 0.09 / 中景 0.28 / 近景 0.6 / 線路際 1.0 / 架線 1.2（架線だけ `main.js` の `render()` で毎フレーム直接描画）/ ホーム 1.5（駅の近くでだけ描く）/ トラス 1.6（橋の近くでだけ）/ 踏切の至近の層 1.6（踏切の近くでだけ）/ トンネルの壁 1.7（トンネルの近くでだけ）。シード変更時は `setSeed()`（`ui.js`）、絵柄変更時は `rebuild()`（`main.js`）で全キャッシュを破棄する。
 
 ## 線形（カーブ・高架・速度）
 
@@ -32,13 +32,22 @@
 ## トンネルと橋
 
 - **トンネルと橋の位置**（`features.js`）: d = 0 から 250 ドット刻みで `world(d)` を走査し、区間 `{ type: 'tunnel' | 'bridge', n, a, b, len, h, via }` の表を決定的に伸ばす（`a`〜`b` は線路際の座標、`h` は絵づくり用のハッシュ）。トンネルは山間の重みが 0.5 をまたぐ地点（必ず）、海沿いの重みが 0.5 をまたぐ地点（確率 0.5）、山間の中（まれ）。橋は山間・海沿い以外で 14000 ドットの枠ごとに確率 0.5。駅のホームから 700、区間どうしは 1500 以上あける。引くのは `featuresIn` / `featureNear` / `nextFeature` / `featureNo`、坑口への近さ `tunnelProx(d, ramp)`、音の切り替え用 `featureMix(d)`。確率・長さは冒頭の定数。確認は `shots` の `feat`（一覧）/ `tunnel` / `bridge` / `at:<距離>` mode。
-- **橋と川**（`scenery/bridge.js`）/ **トンネル**（`scenery/tunnel.js`）: どちらも既存の描画が済んだ後に、区間の `h` から作った専用の乱数で上から描く（チャンクの `r` を使わないので、区間から離れた地点の絵は変わらない）。位置はレイヤー通し座標 `toX(d, f)` で決めるのでチャンクの境目でつながる。`landscape.js` / `trackside.js` の末尾で `riverBand` / `bridgeTrack`、`tunnelHill` / `tunnelTrack` を呼ぶ。川は各レイヤーが `[a, b]` を自分の視差で水面にするので、橋の中ほどで奥へすぼまって見える。トンネルは坑口から 700 ドット以内で `openAt` を閉じ、`coastAt` を岬へ寄せる。窓の手前の層は `truss`（id 7）と `tunnel`（id 8）で、`render()` が `bridgeNear` / `tunnelNear` のときだけ描く。画面全体がトンネルの壁に隠れているあいだ（`tunnelCovers`）は空・奥のレイヤー・架線を描かない。橋の上とトンネルの山の中では架線柱を立てない。
+- **橋と川**（`scenery/bridge.js`）/ **トンネル**（`scenery/tunnel.js`）: どちらも既存の描画が済んだ後に、区間の `h` から作った専用の乱数で上から描く（チャンクの `r` を使わないので、区間から離れた地点の絵は変わらない）。位置はレイヤー通し座標 `toX(d, f)` で決めるのでチャンクの境目でつながる。`landscape.js` / `trackside.js` の末尾で `riverBand` / `bridgeTrack`、`tunnelHill` / `tunnelTrack` を呼ぶ。川は各レイヤーが `[a, b]` を自分の視差で水面にするので、橋の中ほどで奥へすぼまって見える。トンネルは坑口から 700 ドット以内で `openAt` を閉じ、`coastAt` を岬へ寄せる。窓の手前の層は `truss`（id 7）と `tunnel`（id 8）で（踏切の `xing`（id 9）も同じ扱い）、`render()` が `bridgeNear` / `tunnelNear` のときだけ描く。画面全体がトンネルの壁に隠れているあいだ（`tunnelCovers`）は空・奥のレイヤー・架線を描かない。橋の上とトンネルの山の中では架線柱を立てない。
 - **トンネル・橋の音**（`audio.js`）: `driveAudio()` が席の位置の `featureMix` を引き、トンネルでは走行音を強めてこもらせ低域の共鳴を足し、橋では共鳴の強いバンドパス3本の鳴りを足す。`click(when, strength, mix)` はトンネルで反響バスへ送り、橋で金属の響きを足す。定数は `VOL` / `TUNNEL` / `BRIDGE`。
+
+## 踏切
+
+- **位置**（`crossings.js`）: トンネル・橋の表とは別の表にする（同じ表だと橋・トンネルを押しのけて既存の景色が変わり、高架を見る `elev()` も循環 import で呼べない）。`FRAME`（3500 ドット）の枠ごとに `rng(hash32(seed, 97, k))` を必ず4回引いて（置くか・位置・道幅 40〜70・`h`）、置かない枠でも回数を変えない。出現率は `world()` の重みで混ぜる `P`（住宅街・郊外・田園で高く、都心・山間・海沿いで低い）。駅のホームから 400、橋・トンネルから 600、前の踏切から 2000 以内と、前後 400 にカーブ、前後 700（`EL_MARGIN`）に高架・勾配（`elev > 0`）がある所には置かない（ずらさずに諦める）。高架の余白が広いのは、中景（視差 0.28）が窓の端で中央から約 570 ドット先を映すためで、列車が高架・勾配の上にいるあいだは踏切のどの層も窓に入らない。1件は `{ n, c, a, b, w, h }`。引くのは `crossingsIn` / `crossingNear` / `nextCrossing` / `crossingNo`、音用の `crossingAt(d)`（`XING_HEAR` 以内なら符号つき距離）。
+- **絵**（`scenery/crossing.js`）: 区間の `h` から作った計画（`hash32(h, 61, 0)`。車 0〜2台・人か自転車・電柱・竿の本数など）で、既存の描画の後に上から描く。線路際は `trackside.js` の末尾の `crossingTrack` が `[a−12, b+12]` を消して、路面・停止線・正面向きの車や人を描く（警報機・遮断機は描かない。踏切の設備は至近の層だけ、というユーザーの方針）。近景・中景は `landscape.js` の `riverBand` の後の `crossingBand` が、消失点 y=50 の透視で幅を決めた路面を列ごとの `distAt` で塗り、上の建物を消して道を奥へ通す（遠景には描かない。中景の道は地面の上端のすぐ上 y=57 で止める。海沿いでは `shoreY` より手前だけ）。窓の中央でだけ全層の道がひと続きになる。
+- **至近の層**（`scenery/index.js` の `xing`、id 9、視差 `XING_F` = 1.6。トラスと同じ扱い）: `drawCrossingNear` が、窓のすぐ外を横切るこちら側の設備を大きく描く。道の片側（`hash32(h, 67, 0)` で左右を決める）に警報機（てっぺんのスピーカー、×形の警標 y=21、黒い円い背板の赤い2灯 y=41、進行方向の矢印が灯る方向指示器、黄黒の縞の柱、遮断機の機構箱と竿 y=70）、反対側に遮断機だけの柱（道幅 56 未満で竿が1本のときは黄黒の車止め）、その外側に短い白い柵、窓の下端に路面の手前の端。地面は窓の下端より下という想定で、柱の足もとは描かない。`render()` が `crossingClose`（道の端から 170 以内）のときだけ、トラスの後・トンネルの壁の前に描く。`render()` の架線柱（視差 1.2）は、道の前後 45 以内には立てない（`poleOnCrossing`）。
+- **点滅**: チャンクは焼き込まれるので、`render()` が `lay(xing)` の直後に `drawCrossingNearLamps`（円い灯と背板の上のにじみ、夜はトーンの `lit` に応じて外側にもにじむ）を呼び、`floor(t·2) & 1` で左右の灯を交互に点ける（昼でも点滅。色は `E()`）。層と同じ縦の位置 `oy`（揺れ＋カント。層の `drop` は 0）で描く。
+- **警報音**（`audio.js`）: 矩形波＋ずらした倍音2本を `rate`（2.5 打/秒）で打ち、`decay` 0.2 秒で減衰させる。`driveCrossing()`（`driveAudio` の最後）が席の位置で `crossingAt` を引き、純粋な関数 `crossingSound(x, v)` で音量（`1/(1+(x/r0)²)` を範囲の端で 0 に）と音程（横のずれ `side` 60・音速 `c` 3400 のドップラー。近づくと約 7% 高く、通過で連続に下がる）を決める。早送り中・トンネルの中・高架や勾配の上（`state.elev`）では鳴らさない。定数は `VOL.crossing` / `CROSSING`（`range` は `XING_HEAR` とそろえる）。
+- **確認**: `shots` の `xing`（一覧と重なりの検証）/ `crossing[:k,k]`（窓の右寄り・至近の層が窓に入った所・中央・至近の層が出ていく所・通過後の5地点）mode、`?debug` の「次の踏切へ」。
 
 ## 絵柄と描画の重ね順
 
 - **絵柄の仕組み**: 色はすべて `R()`（矩形描画）内で `P(color)` を通り、`STYLES[*].pal` が色を差し替える（結果は `palCache`）。**新しい描画コードも必ず `R()` か `P()` を通すこと**。直接 `fillStyle` を設定すると絵柄切り替えに追従しない。`outline`（輪郭線 `ink()`）と `glass`（窓の映り込み）も絵柄ごとのフラグ。
-- **描画の重ね順**: 空 → 各レイヤー → 架線 → ホーム → トラス → トンネルの壁 → ガラスの映り込み → 車内（`drawInterior()` で別キャンバスに一度だけ描き、窓を `clearRect` で抜いたもの）→ ドアの外の描き足し・扉（`drawDoors(g, state.door)`、毎フレーム）→ つり革・乗客（毎フレーム描画）。
+- **描画の重ね順**: 空 → 各レイヤー → 架線 → ホーム → トラス → 踏切の至近の層とその灯 → トンネルの壁 → ガラスの映り込み → 車内（`drawInterior()` で別キャンバスに一度だけ描き、窓を `clearRect` で抜いたもの）→ ドアの外の描き足し・扉（`drawDoors(g, state.door)`、毎フレーム）→ つり革・乗客（毎フレーム描画）。
 
 ## 駅と乗客
 

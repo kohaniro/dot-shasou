@@ -43,7 +43,7 @@ export function coastAt(e, d) {
 }
 const coast = (L, i, x) => { const d = distAt(L, i, x); return coastAt(world(d), d); };
 /* 波打ち際の画面上の高さ: 陸が遠くまで続くほど上（奥）へ */
-const shoreY = c => c >= 3 ? 52 : c >= 2 ? 59 - 7 * (c - 2) : c >= 1 ? 68 - 9 * (c - 1) : SH - 12 * Math.max(0, c);
+export const shoreY = c => c >= 3 ? 52 : c >= 2 ? 59 - 7 * (c - 2) : c >= 1 ? 68 - 9 * (c - 1) : SH - 12 * Math.max(0, c);
 /* 松林の帯（近景）: 浜より内陸側で、このノイズが高いところに続く */
 const pineBelt = d => vnoise(d / 1300, 63);
 /* 岬の高さ（中景）: 陸が中景を越えて張り出すところが盛り上がり、水平線を隠す */

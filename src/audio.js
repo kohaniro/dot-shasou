@@ -1,5 +1,6 @@
 import { W, state } from './state.js';
 import { featureMix } from './features.js';
+import { crossingAt } from './crossings.js';
 
 /* ---------- audio (Web Audio 合成) ---------- */
 /* 音量の定数はここにまとめる（耳で確かめていないので、どれも控えめ。調整はこの表だけ触ればよい） */
@@ -21,7 +22,8 @@ export const VOL = {
   bridge: 0.8,      // 鉄橋: 金属的な鳴り「ゴーッ」。巡航時・橋の上
   bridgeRing: 0.35, // 鉄橋: 継ぎ目の音に足す金属の響き
   rain: 0.022,      // 雨: 窓・車体をたたく細かい雨の「サーッ」（強い雨・巡航時）
-  rainRoof: 0.05    // 雨: 屋根を打つ粒の「パラパラ」（強い雨・停車時）
+  rainRoof: 0.05,   // 雨: 屋根を打つ粒の「パラパラ」（強い雨・停車時）
+  crossing: 0.09   // 踏切の警報音「カンカン」（踏切の真横で）
 };
 /* トンネルの中での変わり方（どれも featureMix().tunnel に比例して効く） */
 export const TUNNEL = {
@@ -57,9 +59,33 @@ export const RAIN = {
 };
 /* 雪: 音を吸うので、走行音を少しだけ丸める（state.wx.snow に比例） */
 export const SNOW = { rumbleCut: 0.12, rumbleSoft: 0.1, windCut: 0.3 };
+/* 踏切の警報音（crossingAt() の符号つき距離 x = 席 − 踏切の中心 で鳴らす。式は crossingSound()）
+   音源: 矩形波 + 少しずらした倍音（三角波）をローパスに通した持続音を、打つたびの短い減衰エンベロープで刻む */
+export const CROSSING = {
+  freq: 750,        // 基本の音程（Hz）
+  partials: [[2.76, 0.35], [4.07, 0.15]], // 金属らしさの倍音 [基本に対する比, 音量比]（三角波）
+  rate: 2.5,        // 打つ回数（毎秒。2.5 で毎分 150 回）
+  decay: 0.2,       // 打ってから消えるまで（秒。約 −40dB）
+  tone: 3200,       // 全体のローパス（Hz。車内で聞くので少し丸める）
+  r0: 250,          // 音量が半分になる距離（ドット。1ドット≒10cm で約 25m）
+  range: 1500,      // これより遠くでは 0（crossings.js の XING_HEAR と同じ値にする）
+  side: 60,         // 踏切の鳴る所と席の横のずれ（ドット。ドップラーの角度に使う）
+  c: 3400,          // 音速（ドット/秒）
+  ahead: 0.3        // 打撃を何秒先まで予約するか（driveAudio の間隔 0.1 秒より長く）
+};
+/* 踏切の音の係数（純粋な関数）。x: 席 − 踏切の中心（ドット）、v: 速度（ドット/秒）
+   gain: 1/(1+(x/r0)²) を範囲の端で 0 になるよう引き下げて正規化（真横で 1）
+   freq: ドップラー f·(1 + v·(−x)/√(x²+y²)/c)。近づくとき高く、通過で連続に下がる */
+export function crossingSound(x, v) {
+  const { r0, range: R, side: y, c, freq } = CROSSING;
+  const k = q => 1 / (1 + (q / r0) * (q / r0)), e = k(R);
+  const gain = Math.abs(x) >= R ? 0 : Math.max(0, (k(x) - e) / (1 - e));
+  return { gain, freq: freq * (1 + v * (-x) / Math.hypot(x, y) / c) };
+}
 const V_CRUISE = 240;
 
 export let ac = null, master = null, white = null, rumbleF = null, motor = null, soundOn = false, volume = 0.6;
+let xingG = null, xingEnv = null, xingOsc = [], xingNext = 0;
 let rainG = null, rainF = null, roofG = null, rumbleG = null, windG = null, motorG = null, motorF = null, brakeG = null, brakeF = null, tunG = null, bridgeG = null, echoIn = null;
 export function setSoundOn(v) { soundOn = v; }
 export function setVolume(v) { volume = v; }
@@ -122,6 +148,16 @@ export function initAudio() {
   const ps = loopNoise(patter), pf = ac.createBiquadFilter(); pf.type = 'bandpass'; pf.frequency.value = RAIN.roofFreq; pf.Q.value = RAIN.roofQ;
   roofG = ac.createGain(); roofG.gain.value = 0;
   ps.connect(pf); pf.connect(roofG); roofG.connect(master); ps.start();
+  // 踏切の鐘: 持続する発振器 → 打撃のエンベロープ（xingEnv）→ ローパス → 音量（xingG。driveAudio で距離に合わせる）
+  xingEnv = ac.createGain(); xingEnv.gain.value = 0;
+  const xf = ac.createBiquadFilter(); xf.type = 'lowpass'; xf.frequency.value = CROSSING.tone; xf.Q.value = 0.7;
+  xingG = ac.createGain(); xingG.gain.value = 0;
+  xingEnv.connect(xf); xf.connect(xingG); xingG.connect(master);
+  xingOsc = [[1, 1, 'square'], ...CROSSING.partials.map(([m, a]) => [m, a, 'triangle'])].map(([m, a, type]) => {
+    const o = ac.createOscillator(); o.type = type; o.frequency.value = CROSSING.freq * m;
+    const g = ac.createGain(); g.gain.value = a * (type === 'square' ? 0.5 : 1);
+    o.connect(g); g.connect(xingEnv); o.start(); return { o, m };
+  });
   driveAudio(true);
 }
 const running = () => soundOn && ac && ac.state === 'running' && state.rate === 1; // 早送り中は鳴らさない
@@ -153,7 +189,26 @@ export function driveAudio(now = false) {
     const x = state.phase === 'brake' && v > 1.5 ? Math.max(0, 1 - v / 60) : 0;
     brakeG.gain.setTargetAtTime(VOL.brake * x * x * Math.min(1, v / 6), T, tc);
     brakeF.frequency.setTargetAtTime(2300 + 900 * x, T, tc);
+    driveCrossing(v, tu, T, tc);
   } catch (e) { console.warn('driveAudio', e); }
+}
+
+/* 踏切の警報音: 距離で音量、ドップラーで音程を動かし、打撃を ahead 秒先まで等間隔に予約する。
+   早送り中・音が止まっている間・トンネルの中・範囲の外では鳴らさない（打撃の位相もそこで切る） */
+function driveCrossing(v, tu, T, tc) {
+  if (!xingG) return;
+  const xc = running() && tu < 1 ? crossingAt(state.dist + W / 2) : null;
+  const { gain: g0, freq } = xc ? crossingSound(xc.x, v) : { gain: 0, freq: CROSSING.freq };
+  const gain = g0 * Math.max(0, 1 - state.elev * 4); // 高架・勾配の上では鳴らさない（踏切は地上にしか無い）
+  xingG.gain.setTargetAtTime(VOL.crossing * gain * (1 - tu), T, tc);
+  if (gain <= 0) { xingNext = 0; return; }
+  for (const { o, m } of xingOsc) o.frequency.setTargetAtTime(freq * m, T, tc);
+  const P = 1 / CROSSING.rate, tau = CROSSING.decay / 4.6; // 4.6τ で約 −40dB
+  if (xingNext < T + 0.01) xingNext = T + 0.02; // 鳴り始め・中断の後は今から刻み直す
+  for (; xingNext < T + CROSSING.ahead; xingNext += P) {
+    const t = xingNext, e = xingEnv.gain;
+    e.setValueAtTime(0, t); e.linearRampToValueAtTime(1, t + 0.003); e.setTargetAtTime(0, t + 0.003, tau);
+  }
 }
 
 /* 継ぎ目の音。mix は featureMix() の { tunnel, bridge }（省略可）: トンネルでは反響、橋では金属の響きを足す */

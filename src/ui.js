@@ -3,12 +3,14 @@ import { STYLES, setStyle } from './palette.js';
 import { layers } from './scenery/index.js';
 import { genPassengers } from './passengers.js';
 import { jumpTo } from './journey.js';
+import { reset as resetCrossings } from './crossings.js';
 import { ac, master, soundOn, volume, setSoundOn, setVolume, initAudio, syncAudio } from './audio.js';
 
 const lineLabel = document.getElementById('line-label');
 
 export function setSeed(n) {
   state.seed = n >>> 0;
+  resetCrossings(); // 踏切の表を捨てる（読むときにもシードを見て作り直すが、ここで先に捨てておく）
   jumpTo(0); // 進行を出発地点（最初の駅へ向かって巡航中）に置き直す。state.dist = 0、継ぎ目の予約の破棄もここで
   layers.forEach(l => l.clear());
   genPassengers();

@@ -1,6 +1,6 @@
 // 指定シード・絵柄で、各バイオームの中心と遷移の途中の景色を PNG に保存する（ヘッドレス Chrome を CDP で操作。依存なし）
 // 使い方: node shots.mjs <outDir> <seed,seed> <style,style> [mode]
-//   mode: both（既定） | raw | view | run | perf | pano:<距離,距離> | at:<距離,距離> | zoom:<距離,距離> | station[:<k,k>] | door[:<k,k>] | journey[:<秒>] | pass | walk | swap[:<k,k>] | feat | tunnel[:<k,k>] | bridge[:<k,k>]
+//   mode: both（既定） | raw | view | run | perf | pano:<距離,距離> | at:<距離,距離> | zoom:<距離,距離> | station[:<k,k>] | door[:<k,k>] | journey[:<秒>] | pass | walk | swap[:<k,k>] | feat | tunnel[:<k,k>] | bridge[:<k,k>] | xing | crossing[:<k,k>]
 //         | course | curve[:<k,k>] | elev[:<k,k>] | clock | tod[:<距離,距離>] | wx[:<距離,距離>] | tonerun[:<秒>]
 //         | gif:<開始距離>（README 用の GIF。SHOTS_GIF_SECS 既定8 / SHOTS_GIF_FPS 既定20 / SHOTS_GIF_SCALE 既定1）
 //   時間帯・天気は、既定では昼・晴に固定して撮る。環境変数 SHOTS_TOD=auto|dawn|noon|dusk|night|<時刻> と SHOTS_WX=auto|clear|cloud|rain|snow で変える（auto = 走行距離から決まる値。cloud:0.5 のように強さも付けられる）
@@ -67,7 +67,7 @@ const stub = (ls) => `(() => {
   localStorage.clear(); for (const k in ls) localStorage.setItem(k, ls[k]);
   window.__step = (n, ms) => { for (let i = 0; i < n; i++) { now += ms; const c = q.splice(0); for (const f of c) f(now); } return q.length; };
   window.__mods = async () => {
-    if (!window.__m) window.__m = { st: await import('/src/state.js'), w: await import('/src/world.js'), sc: await import('/src/scenery/index.js'), sky: await import('/src/scenery/sky.js'), j: await import('/src/journey.js'), sn: await import('/src/stations.js'), ck: await import('/src/clock.js'), tn: await import('/src/tone.js'), ft: await import('/src/features.js'), co: await import('/src/course.js'), ly: await import('/src/layers.js') };
+    if (!window.__m) window.__m = { st: await import('/src/state.js'), w: await import('/src/world.js'), sc: await import('/src/scenery/index.js'), sky: await import('/src/scenery/sky.js'), j: await import('/src/journey.js'), sn: await import('/src/stations.js'), ck: await import('/src/clock.js'), tn: await import('/src/tone.js'), ft: await import('/src/features.js'), co: await import('/src/course.js'), xg: await import('/src/crossings.js'), ly: await import('/src/layers.js') };
     return window.__m;
   };
   // 最初の1周について、各バイオームの中心と遷移の中間の距離を求める
@@ -142,6 +142,39 @@ const stub = (ls) => `(() => {
       info.push(tag + ' dist=' + S.dist.toFixed(1) + ' phase=' + S.phase + ' speed=' + S.speed.toFixed(1) + ' mix(tunnel=' + m.tunnel.toFixed(2) + ' bridge=' + m.bridge.toFixed(2) + ') prox=' + ft.tunnelProx(S.dist + 160, 600).toFixed(2));
     }
     return { f, views, raws, info };
+  };
+  // 踏切（crossings.js）の一覧と検証（d = 0〜dMax）: 間隔、駅・橋・トンネル・高架・カーブとの重なり、バイオーム別の件数
+  window.__xing = async (dMax) => {
+    const { w, sn, ft, co, xg } = await window.__mods(); const xs = xg.crossingsIn(0, dMax), rows = [], bio = {}, bad = { station: 0, feature: 0, elev: 0, curve: 0, start: 0 };
+    const gaps = [];
+    xs.forEach((x, i) => {
+      const e = w.world(x.c), top = w.BIOME_KEYS.reduce((a, k) => e[k] > e[a] ? k : a, 'city');
+      bio[top] = (bio[top] || 0) + 1;
+      if (i > 0) gaps.push(x.c - xs[i - 1].c);
+      if (sn.stationsIn(x.a, x.b).length) bad.station++;
+      if (ft.featureNear(x.c, x.w / 2)) bad.feature++;
+      let el = false, cu = false; for (let d = x.a - 700; d <= x.b + 700; d += 5) { if (co.elev(d) > 0) el = true; if (d >= x.a && d <= x.b && co.curve(d) !== 0) cu = true; } // 高架は前後 700（中景が窓の端で映す範囲）まで見る
+      if (el) bad.elev++; if (cu) bad.curve++; if (x.a < 2000) bad.start++;
+      const s = sn.nextStation(x.c - 160), sp = sn.prevStation(x.c - 160);
+      const sd = Math.min(...[s, sp].filter(Boolean).map(q => Math.max(0, q.x0 - x.b, x.a - q.x1)));
+      const f = ft.featureNear(x.c, 1e5), fd = f ? Math.max(0, f.a - x.b, x.a - f.b) : '-';
+      rows.push(['xing', '#' + x.n, 'c=' + x.c, 'w=' + x.w, 'h=' + x.h, i ? 'gap ' + gaps[gaps.length - 1] : 'first', top + ' ' + e[top].toFixed(2), 'station ' + sd, 'feature ' + fd].join('  '));
+    });
+    const nSt = sn.nextStation(dMax).k - 1;
+    const mean = gaps.length ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) : '-', min = gaps.length ? Math.min(...gaps) : '-', max = gaps.length ? Math.max(...gaps) : '-';
+    return { rows, sum: 'count ' + xs.length + '  stations ' + nSt + '（駅間あたり ' + (xs.length / Math.max(1, nSt)).toFixed(2) + '）  gap mean ' + mean + ' min ' + min + ' max ' + max + '（250 ドット/秒で平均 ' + (typeof mean === 'number' ? (mean / 250).toFixed(0) : '-') + ' 秒）  biome ' + JSON.stringify(bio),
+      bad: 'overlaps: station ' + bad.station + ' feature ' + bad.feature + ' elev ' + bad.elev + ' curve ' + bad.curve + ' start ' + bad.start };
+  };
+  // 踏切（k 番目）の5コマ: 道の中心 c が窓の右寄り（画面 x=250）/ 至近の層が窓に入った所 / 窓の中央 / 至近の層が出ていく所 / 通過後（窓の左端より 200 手前、x=-200 相当）
+  window.__crossing = async (k) => {
+    const { st, xg } = await window.__mods(); const S = st.state, x = xg.crossingNo(k), views = [], raws = [], info = [];
+    if (!x) return null;
+    for (const [tag, d] of [['right', x.c - 250], ['near-in', x.c - 205], ['center', x.c - 160], ['near-out', x.c - 115], ['passed', x.c + 200]]) {
+      await window.__goto(d); views.push(window.__view()); raws.push(await window.__raw(S.dist, 480, 2));
+      const q = xg.crossingAt(S.dist + 160);
+      info.push(tag + ' dist=' + S.dist.toFixed(1) + ' phase=' + S.phase + ' speed=' + S.speed.toFixed(1) + ' crossingAt(center)=' + (q ? 'x ' + q.x.toFixed(1) + ' #' + q.xing.n : 'null'));
+    }
+    return { x, views, raws, info };
   };
   // 線形（course.js）の一覧と検証（d = 0〜dMax）: カーブ、向きの範囲、傾きの最大、高架、制限速度、実際に走らせた駅間ごとの最高速度
   window.__course = async (dMax) => {
@@ -426,6 +459,19 @@ for (const seed of seedArg.split(',')) for (const style of styleArg.split(',')) 
         if (pass === 0) console.log([`  ${type} ${k}: #${r.f.n} a=${r.f.a} b=${r.f.b} len=${r.f.len} via=${r.f.via} h=${r.f.h}`, ...r.info].join('\n    '));
         h.push(save(`${type}-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.views)})`)));
         h.push(save(`${type}-raw-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.raws)})`)));
+      }
+    } else if (mode === 'xing') { // 踏切の一覧と検証（画像なし）
+      const r = await pg.ev('__xing(260000)');
+      if (pass === 0) console.log(['', ...r.rows, r.sum, r.bad].join('\n  ').slice(1));
+      h.push(crypto.createHash('sha256').update(r.rows.join(';')).digest('hex').slice(0, 12));
+    } else if (/^crossing(:|$)/.test(mode)) { // 踏切の k 番目ごとに5コマ
+      const arg = mode.split(':')[1], ks = arg ? arg.split(',').map(Number) : [1, 2];
+      for (const k of ks) {
+        const r = await pg.ev(`__crossing(${k})`);
+        if (!r) { if (pass === 0) console.log(`  crossing ${k}: 見つからない`); continue; }
+        if (pass === 0) console.log([`  crossing ${k}: #${r.x.n} c=${r.x.c} a=${r.x.a} b=${r.x.b} w=${r.x.w} h=${r.x.h}`, ...r.info].join('\n    '));
+        h.push(save(`crossing-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.views)})`)));
+        h.push(save(`crossing-raw-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.raws)})`)));
       }
     } else if (mode === 'clock') { // 時刻・天気の一覧と検証（画像なし）
       const r = await pg.ev('__clock(450000)');

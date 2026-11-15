@@ -1,9 +1,10 @@
 import { W, SY, SH, VY, VH, SUB, RAIL, state } from './state.js';
 import { STYLE, clearPal, setTone, P, R } from './palette.js';
 import { sky, skyB } from './scenery/sky.js';
-import { clouds, far, mid, near, track, plat, truss, tunnel, layers } from './scenery/index.js';
+import { clouds, far, mid, near, track, plat, truss, xing, tunnel, layers } from './scenery/index.js';
 import { bridgeNear, poleOnBridge } from './scenery/bridge.js';
 import { tunnelNear, tunnelCovers, poleInTunnel, tunnelGlass } from './scenery/tunnel.js';
+import { drawCrossingNearLamps, crossingClose, poleOnCrossing } from './scenery/crossing.js';
 import { drawDoorBackdrop } from './scenery/station.js';
 import { stationNear } from './stations.js';
 import { interior, drawInterior, drawStraps, drawDoors, doorShift, DOOR_W } from './interior.js';
@@ -98,6 +99,7 @@ function render() {
   const fall = band => { if (state.wx.rain > 0 || state.wx.snow > 0) toned(() => drawFall(cx, band)); };
   lay(clouds);
   lay(far); fall(0); lay(mid); lay(near); fall(1); lay(track);
+  // 踏切の赤い灯の点滅（線路際と同じ位置・同じ縦のずれで。画面に踏切があるときだけ）
   // 架線と架線柱（隣の線路）
   toned(() => {
   const SPAN = 480, wx = Math.floor(dist * 1.2), dr = 96, dro = 48, wy = 13, my0 = 5, sag = 6;
@@ -110,7 +112,7 @@ function render() {
   }
   for (let k = Math.floor(wx / SPAN); k * SPAN < wx + W + 20; k++) {
     const sx = k * SPAN - wx;
-    if (poleOnBridge(k * SPAN) || poleInTunnel(k * SPAN)) continue; // 橋の上・トンネルの山の中には柱を立てない
+    if (poleOnBridge(k * SPAN) || poleInTunnel(k * SPAN) || poleOnCrossing(k * SPAN)) continue; // 橋の上・トンネルの山の中・踏切の道の上には柱を立てない
     const py = Math.floor(SY + Math.min(0, cant)), ph = SH + 2 + Math.ceil(Math.abs(cant)); // 柱は窓の上下の端まで届かせる
     R(cx, sx, py, 4, ph, '#4b5350'); R(cx, sx, py, 1, ph, '#75807c');
     R(cx, sx - 12, SY + 3 + cant, 30, 2, '#4b5350');
@@ -122,6 +124,8 @@ function render() {
   if (stationNear(dist + W / 2, 160)) lay(plat);
   // トラス橋の鉄骨（架線より手前）。橋の近くでだけ描く
   if (bridgeNear(dist + W / 2)) lay(truss);
+  // 踏切のこちら側の警報機・遮断機（架線より手前）。踏切の近くでだけ描く。灯の点滅は毎フレーム重ねる
+  if (crossingClose(dist + W / 2)) { lay(xing); drawCrossingNearLamps(cx, dist, oy, t); }
   // トンネルの壁と坑門（架線より手前）。トンネルの近くでだけ描く
   if (dark || tunnelNear(dist + W / 2)) lay(tunnel);
   // ガラスの映り込み
