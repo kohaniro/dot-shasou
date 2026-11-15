@@ -5,6 +5,7 @@ import { featureNear, nextFeature } from './features.js';
 import { nextCurve, nextElev, V_MAX } from './course.js';
 import { crossingNear, nextCrossing } from './crossings.js';
 import { wallNear, nextWall } from './closewalls.js';
+import { trainNear, nextTrain } from './trains.js';
 import { TOD, DAWN, DUSK, nextTimePoint, nextWeatherPoint } from './clock.js';
 import { cruiseAt, brakeDist, jumpTo } from './journey.js';
 import { passengers } from './passengers.js';
@@ -76,6 +77,12 @@ function wallInfo(c) {
   const n = nextWall(c);
   return n ? `至近の建物${n.n} まで ${Math.round(n.a - c)}` : '';
 }
+function trainInfo(c) {
+  const x = trainNear(c);
+  if (x) return `対向列車${x.n} の前`;
+  const n = nextTrain(c);
+  return n ? `対向列車${n.n} まで ${Math.round(n.a - c)}` : '';
+}
 /* 次の夕方・朝・天気の変わり目の手前: 移り変わりが始まる地点が窓の中央に来る BEFORE ドット手前（state.dist の値）。固定は見ない本来の時刻・天気で探す */
 export const beforeTime = hour => nextTimePoint(state.dist + W / 2 + BEFORE + 1, hour) - W / 2 - BEFORE;
 export function beforeWeather() { const d = nextWeatherPoint(state.dist + W / 2 + BEFORE + 1); return d === null ? null : d - W / 2 - BEFORE; }
@@ -86,12 +93,12 @@ function toneInfo() {
     (tn ? ` ／ トーン ${tn.key}` + (state.toneTo ? ` → ${state.toneTo.key} ${Math.round(state.toneK * 100)}%` : '') : '');
 }
 function info() {
-  const c = state.dist + W / 2, e = world(c), st = state.station, fi = featInfo(c), xi = xingInfo(c), wi = wallInfo(c);
+  const c = state.dist + W / 2, e = world(c), st = state.station, fi = featInfo(c), xi = xingInfo(c), wi = wallInfo(c), ti = trainInfo(c);
   const ws = BIOME_KEYS.filter(k => e[k] >= 0.05).map(k => k + ' ' + e[k].toFixed(2)).join(' ');
   const sg = v => (v > 0 ? '+' : '') + v.toFixed(2);
   return `距離 ${Math.floor(state.dist)} ／ ${ws} ／ ${state.phase} ${Math.round(state.speed * 0.36)}km/h（目標 ${Math.round(cruiseAt(state.dist, st ? st.pos : Infinity) * 0.36)}）` +
     ` ／ curve ${sg(state.curve)} elev ${state.elev.toFixed(2)}` +
-    (st ? ` ／ ${st.name} まで ${Math.max(0, Math.round(st.pos - state.dist))}` : '') + (fi ? ` ／ ${fi}` : '') + (xi ? ` ／ ${xi}` : '') + (wi ? ` ／ ${wi}` : '') + ` ／ 乗客 ${passengers.length}人 ／ ${toneInfo()}`;
+    (st ? ` ／ ${st.name} まで ${Math.max(0, Math.round(st.pos - state.dist))}` : '') + (fi ? ` ／ ${fi}` : '') + (xi ? ` ／ ${xi}` : '') + (wi ? ` ／ ${wi}` : '') + (ti ? ` ／ ${ti}` : '') + ` ／ 乗客 ${passengers.length}人 ／ ${toneInfo()}`;
 }
 
 /* 初期化。デバッグ表示が有効なら、毎フレーム呼ぶ関数 tick(now) を返す（表示の更新は 0.25 秒に1回） */
@@ -117,7 +124,7 @@ export function initDebug(render) {
     const b = document.getElementById('dbg-' + type);
     if (b) b.addEventListener('click', () => { const d = beforeFeature(type); if (d !== null) jump(d); });
   }
-  for (const [id, next] of [['dbg-curve', nextCurve], ['dbg-elev', nextElev], ['dbg-xing', nextCrossing], ['dbg-wall', nextWall]]) {
+  for (const [id, next] of [['dbg-curve', nextCurve], ['dbg-elev', nextElev], ['dbg-xing', nextCrossing], ['dbg-wall', nextWall], ['dbg-train', nextTrain]]) {
     const b = document.getElementById(id);
     if (b) b.addEventListener('click', () => { const d = beforeCourse(next); if (d !== null) jump(d); });
   }

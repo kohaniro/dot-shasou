@@ -1,6 +1,6 @@
 // 指定シード・絵柄で、各バイオームの中心と遷移の途中の景色を PNG に保存する（ヘッドレス Chrome を CDP で操作。依存なし）
 // 使い方: node shots.mjs <outDir> <seed,seed> <style,style> [mode]
-//   mode: both（既定） | raw | view | run | perf | pano:<距離,距離> | at:<距離,距離> | zoom:<距離,距離> | station[:<k,k>] | door[:<k,k>] | journey[:<秒>] | pass | walk | swap[:<k,k>] | feat | tunnel[:<k,k>] | bridge[:<k,k>] | xing | crossing[:<k,k>] | wall | closewall[:<k,k>]
+//   mode: both（既定） | raw | view | run | perf | pano:<距離,距離> | at:<距離,距離> | zoom:<距離,距離> | station[:<k,k>] | door[:<k,k>] | journey[:<秒>] | pass | walk | swap[:<k,k>] | feat | tunnel[:<k,k>] | bridge[:<k,k>] | xing | crossing[:<k,k>] | wall | closewall[:<k,k>] | trains | train[:<k,k>] | trainrun[:<k,sx,n>]
 //         | course | curve[:<k,k>] | elev[:<k,k>] | clock | tod[:<距離,距離>] | wx[:<距離,距離>] | tonerun[:<秒>]
 //         | gif:<開始距離>（README 用の GIF。SHOTS_GIF_SECS 既定8 / SHOTS_GIF_FPS 既定20 / SHOTS_GIF_SCALE 既定1）
 //   時間帯・天気は、既定では昼・晴に固定して撮る。環境変数 SHOTS_TOD=auto|dawn|noon|dusk|night|<時刻> と SHOTS_WX=auto|clear|cloud|rain|snow で変える（auto = 走行距離から決まる値。cloud:0.5 のように強さも付けられる）
@@ -67,7 +67,7 @@ const stub = (ls) => `(() => {
   localStorage.clear(); for (const k in ls) localStorage.setItem(k, ls[k]);
   window.__step = (n, ms) => { for (let i = 0; i < n; i++) { now += ms; const c = q.splice(0); for (const f of c) f(now); } return q.length; };
   window.__mods = async () => {
-    if (!window.__m) window.__m = { st: await import('/src/state.js'), w: await import('/src/world.js'), sc: await import('/src/scenery/index.js'), sky: await import('/src/scenery/sky.js'), j: await import('/src/journey.js'), sn: await import('/src/stations.js'), ck: await import('/src/clock.js'), tn: await import('/src/tone.js'), ft: await import('/src/features.js'), co: await import('/src/course.js'), xg: await import('/src/crossings.js'), cw: await import('/src/closewalls.js'), ly: await import('/src/layers.js') };
+    if (!window.__m) window.__m = { st: await import('/src/state.js'), w: await import('/src/world.js'), sc: await import('/src/scenery/index.js'), sky: await import('/src/scenery/sky.js'), j: await import('/src/journey.js'), sn: await import('/src/stations.js'), ck: await import('/src/clock.js'), tn: await import('/src/tone.js'), ft: await import('/src/features.js'), co: await import('/src/course.js'), xg: await import('/src/crossings.js'), cw: await import('/src/closewalls.js'), tr: await import('/src/trains.js'), ly: await import('/src/layers.js') };
     return window.__m;
   };
   // 最初の1周について、各バイオームの中心と遷移の中間の距離を求める
@@ -220,6 +220,95 @@ const stub = (ls) => `(() => {
     const d1 = comp(L1), d2 = comp(L2); let diff = 0; for (let q = 0; q < d1.length; q += 4) if (d1[q] !== d2[q] || d1[q + 1] !== d2[q + 1] || d1[q + 2] !== d2[q + 2] || d1[q + 3] !== d2[q + 3]) diff++;
     info.push('seam check (chunk 256 vs 61): ' + diff + ' px differ');
     return { x, views, raws, info };
+  };
+  // 対向列車（trains.js）の一覧と検証（d = 0〜dMax）: 件数、バイオーム別、間隔（秒）、両数。
+  // journey.js の stepJourney を 1/60 秒刻みで（実ループと同じ進み方で）d = 0 から1本で走らせ、各件の
+  // 先頭が窓の右端（画面 x=320）に入ってから最後尾が左端（x=0）を出るまでの秒数、そのあいだの進行の状態・速さ、
+  // 窓に見えているあいだに描画の判定（ホーム stationNear 160 / トラス bridgeNear / トンネル tunnelNear / 踏切 crossingClose）が真になったフレーム数を数える
+  window.__trains = async (dMax) => {
+    const { st, w, sn, co, j, tr } = await window.__mods(); const S = st.state;
+    const br = await import('/src/scenery/bridge.js'), tu = await import('/src/scenery/tunnel.js'), xc = await import('/src/scenery/crossing.js'), cwl = await import('/src/scenery/closewall.js');
+    const ts = tr.trainsIn(0, dMax), rows = [], bio = {}, cars = {}, gaps = [], secs = [], bad = { phase: 0, station: 0, bridge: 0, tunnel: 0, crossing: 0, order: 0 };
+    let elevN = 0, wallN = 0, vmin = Infinity, vmax = 0, worst = null, best = null;
+    const keep = { dist: S.dist }, F = tr.TRAIN_F, dt = 1 / 60, run = new Map();
+    // d = 0 から dMax の先まで1本の走行で（減速・停車・発車・カーブの前後の速さの履歴ごと）。各件の先頭（X0）・最後尾（X1）の画面 x = X − dist × F
+    {
+      j.jumpTo(0); let idx = 0, prevD = S.dist, t = 0;
+      const lastX = ts.length ? Math.round((ts[ts.length - 1].a - 160) * F + 160) + ts[ts.length - 1].len : 0;
+      for (let n = 0; n < 60 * 3600 && idx < ts.length && S.dist * F < lastX + 100; n++) {
+        j.stepJourney(dt); t += dt;
+        const d = S.dist, step = Math.max(1e-9, (d - prevD) * F);
+        for (let q = idx; q < ts.length; q++) {
+          const x = ts[q], X0 = Math.round((x.a - 160) * F + 160), X1 = X0 + x.len, sx0 = X0 - d * F, sx1 = X1 - d * F;
+          if (sx0 > 340) break;
+          let o = run.get(x.n); if (!o) run.set(x.n, o = { tIn: null, tOut: null, phases: new Set(), lo: Infinity, hi: 0, flags: { station: 0, bridge: 0, tunnel: 0, crossing: 0 } });
+          if (o.tIn === null && sx0 <= 320) o.tIn = t - dt * (320 - sx0) / step;
+          if (o.tOut === null && sx1 <= 0) { o.tOut = t - dt * (0 - sx1) / step; if (q === idx) idx++; }
+          if (sx0 < 320 + 20 && sx1 > -20) {
+            o.phases.add(S.phase); o.lo = Math.min(o.lo, S.speed); o.hi = Math.max(o.hi, S.speed);
+            const c = d + 160;
+            if (sn.stationNear(c, 160)) o.flags.station++;
+            if (br.bridgeNear(c)) o.flags.bridge++;
+            if (tu.tunnelNear(c)) o.flags.tunnel++;
+            if (xc.crossingClose(c)) o.flags.crossing++;
+          }
+        }
+        prevD = d;
+      }
+    }
+    ts.forEach((x, i) => {
+      const e = w.world(x.c), top = w.BIOME_KEYS.reduce((a, k) => e[k] > e[a] ? k : a, 'city');
+      bio[top] = (bio[top] || 0) + 1; cars[x.cars] = (cars[x.cars] || 0) + 1;
+      if (i > 0) { gaps.push((x.a - ts[i - 1].b) / Math.max(60, co.speedLimit(x.a))); if (x.a <= ts[i - 1].b) bad.order++; }
+      const o = run.get(x.n) || { tIn: null, tOut: null, phases: new Set(['(not reached)']), lo: NaN, hi: NaN, flags: {} };
+      const { tIn, tOut, phases, lo, hi, flags } = o;
+      const sec = tOut !== null && tIn !== null ? tOut - tIn : null;
+      if (sec !== null) { secs.push(sec); if (!worst || sec > worst[0]) worst = [sec, x.n]; if (!best || sec < best[0]) best = [sec, x.n]; }
+      if ([...phases].some(p => p !== 'run')) bad.phase++;
+      for (const k in flags) if (flags[k]) bad[k]++;
+      vmin = Math.min(vmin, lo); vmax = Math.max(vmax, hi);
+      const el = co.elev(x.c); if (el > 0) elevN++;
+      const wl = cwl.wallClose(x.c); if (wl) wallN++;
+      const s = sn.nextStation(x.a - 160), sp = sn.prevStation(x.a - 160);
+      rows.push(['train', '#' + x.n, 'a=' + x.a, 'b=' + x.b, 'cars=' + x.cars, 'v^=' + x.v, 'run ' + lo.toFixed(0) + '-' + hi.toFixed(0), 'pass ' + (sec === null ? '-' : sec.toFixed(2) + 's'), [...phases].join('/'),
+        top + ' ' + e[top].toFixed(2), 'elev ' + el.toFixed(2) + (wl ? ' wall' : ''), 'to stop ' + (s.pos - (x.b - 160)) + (sp ? ' from stop ' + ((x.a - 160) - sp.pos) : '')].join('  '));
+    });
+    j.jumpTo(keep.dist);
+    let cityT = 0; const step = 50, bioT = {}; for (let d = 0; d < dMax; d += step) { const dt = step / Math.max(60, co.speedLimit(d)), e = w.world(d), top = w.BIOME_KEYS.reduce((a, k) => e[k] > e[a] ? k : a, 'city'); cityT += dt; bioT[top] = (bioT[top] || 0) + dt; }
+    const per = Object.keys(bioT).map(k => k + ' ' + (bio[k] ? Math.round(bioT[k] / bio[k]) + 's' : '-') + '/' + Math.round(bioT[k]) + 's').join(' ');
+    const avg = a => a.length ? (a.reduce((p, q) => p + q, 0) / a.length) : 0;
+    return { rows, sum: 'count ' + ts.length + '  run time ' + cityT.toFixed(0) + ' s（制限速度で）→ ' + (ts.length ? (cityT / ts.length).toFixed(0) : '-') + ' 秒に1件  gap(s) mean ' + avg(gaps).toFixed(0) + ' min ' + (gaps.length ? Math.min(...gaps).toFixed(0) : '-') + ' max ' + (gaps.length ? Math.max(...gaps).toFixed(0) : '-') +
+      '  biome ' + JSON.stringify(bio) + '  1件あたりの秒数/走行秒数 ' + per + '  cars ' + JSON.stringify(cars) + '  elev ' + elevN + '  with closewall ' + wallN,
+      pass: 'pass seconds: min ' + (best ? best[0].toFixed(2) + ' (#' + best[1] + ')' : '-') + ' max ' + (worst ? worst[0].toFixed(2) + ' (#' + worst[1] + ')' : '-') + ' mean ' + avg(secs).toFixed(2) + '  speed while visible ' + vmin.toFixed(0) + '-' + vmax.toFixed(0),
+      bad: 'overlaps (frames visible): not-run ' + bad.phase + ' station ' + bad.station + ' bridge ' + bad.bridge + ' tunnel ' + bad.tunnel + ' crossing ' + bad.crossing + ' order ' + bad.order };
+  };
+  // 対向列車（k 番目）の5コマ: 先頭が窓の右から入ってくる所（先頭が画面 x=250）/ 窓いっぱい（先頭が x=20）/ 最初の連結部が窓の中央 / 最後尾が出ていく所（最後尾が x=60）/ 通過後（最後尾が x=-200）。
+  // __goto は2フレーム（32ms）進めるので、そのぶん（見込んだ速さ v で）手前へ飛ぶ。あわせてチャンクの継ぎ目の検証
+  window.__train = async (k) => {
+    const { st, tr } = await window.__mods(); const S = st.state, x = tr.trainNo(k), views = [], raws = [], info = [], F = tr.TRAIN_F;
+    if (!x) return null;
+    const X0 = Math.round((x.a - 160) * F + 160), X1 = X0 + x.len, at = (X, sx) => (X - sx) / F - 0.032 * x.v;
+    for (const [tag, d] of [['enter', at(X0, 250)], ['full', at(X0, 20)], ['coupling', at(X0 + tr.TRAIN.car + tr.TRAIN.gap / 2, 160)], ['leave', at(X1, 60)], ['passed', at(X1, -200)]]) {
+      await window.__goto(d); views.push(window.__view()); raws.push(await window.__raw(S.dist, 480, 2));
+      info.push(tag + ' dist=' + S.dist.toFixed(1) + ' phase=' + S.phase + ' speed=' + S.speed.toFixed(1) + ' head x=' + (X0 - S.dist * F).toFixed(0) + ' tail x=' + (X1 - S.dist * F).toFixed(0));
+    }
+    const { sc, ly, tn } = await window.__mods(); tn.snapToneAt(S.dist);
+    const L1 = sc.train, L2 = new ly.Layer(L1.id, L1.f, 61, L1.draw), A = X0 - 60, B = X1 + 60;
+    const comp = L => { const c = document.createElement('canvas'); c.width = B - A; c.height = 80; const g = c.getContext('2d'); for (let i = Math.floor(A / L.cw); i * L.cw < B; i++) g.drawImage(L.chunk(i), i * L.cw - A, 0); return g.getImageData(0, 0, c.width, 80).data; };
+    const d1 = comp(L1), d2 = comp(L2); let diff = 0; for (let q = 0; q < d1.length; q += 4) if (d1[q] !== d2[q] || d1[q + 1] !== d2[q + 1] || d1[q + 2] !== d2[q + 2] || d1[q + 3] !== d2[q + 3]) diff++;
+    info.push('seam check (chunk 256 vs 61): ' + diff + ' px differ');
+    return { x, views, raws, info };
+  };
+  // 対向列車（k 番目）の連続フレーム: 先頭が画面 x=sx に来る所から、実ループを 1/60 秒ずつ n フレーム進めた画面（ちらつき・逆走して見えないかの確認）
+  window.__trainRun = async (k, sx, n) => {
+    const { st, tr } = await window.__mods(); const S = st.state, x = tr.trainNo(k), views = [], info = [], F = tr.TRAIN_F;
+    if (!x) return null;
+    const X0 = Math.round((x.a - 160) * F + 160);
+    await window.__goto((X0 - sx) / F - 0.032 * x.v);
+    // 窓のまわり（内部座標 y=22〜108、幅320）を3倍で
+    const crop = () => { const v = document.getElementById('view'), q = v.width / 320, c = document.createElement('canvas'); c.width = 960; c.height = 86 * 3; const g = c.getContext('2d'); g.imageSmoothingEnabled = false; g.drawImage(v, 0, (22 - 20) * q, 320 * q, 86 * q, 0, 0, c.width, c.height); return c.toDataURL('image/png'); };
+    for (let i = 0; i < n; i++) { if (i) window.__step(1, 1000 / 60); views.push(crop()); info.push('f' + i + ' dist=' + S.dist.toFixed(1) + ' head x=' + (X0 - S.dist * F).toFixed(1)); }
+    return { x, views, info };
   };
   // 線形（course.js）の一覧と検証（d = 0〜dMax）: カーブ、向きの範囲、傾きの最大、高架、制限速度、実際に走らせた駅間ごとの最高速度
   window.__course = async (dMax) => {
@@ -530,6 +619,27 @@ for (const seed of seedArg.split(',')) for (const style of styleArg.split(',')) 
         if (pass === 0) console.log([`  closewall ${k}: #${r.x.n} a=${r.x.a} b=${r.x.b} len=${r.x.len} glass=${r.x.glass} h=${r.x.h} [${r.x.bldgs.map(b => b.mat).join(' ')}]`, ...r.info].join('\n    '));
         h.push(save(`closewall-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.views)})`)));
         h.push(save(`closewall-raw-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.raws)})`)));
+      }
+    } else if (mode === 'trains') { // 対向列車の一覧と検証（画像なし）
+      const r = await pg.ev('__trains(260000)');
+      if (pass === 0) console.log(['', ...r.rows, r.sum, r.pass, r.bad].join('\n  ').slice(1));
+      h.push(crypto.createHash('sha256').update(r.rows.join(';')).digest('hex').slice(0, 12));
+    } else if (/^train(:|$)/.test(mode)) { // 対向列車の k 番目ごとに5コマ
+      const arg = mode.split(':')[1], ks = arg ? arg.split(',').map(Number) : [1, 2];
+      for (const k of ks) {
+        const r = await pg.ev(`__train(${k})`);
+        if (!r) { if (pass === 0) console.log(`  train ${k}: 見つからない`); continue; }
+        if (pass === 0) console.log([`  train ${k}: #${r.x.n} a=${r.x.a} b=${r.x.b} cars=${r.x.cars} len=${r.x.len} v=${r.x.v} h=${r.x.h}`, ...r.info].join('\n    '));
+        h.push(save(`train-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.views)})`)));
+        h.push(save(`train-raw-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.raws)})`)));
+      }
+    } else if (/^trainrun(:|$)/.test(mode)) { // 対向列車の連続フレーム（1/60 秒刻み）
+      const [k = 1, sx = 200, n = 6] = (mode.split(':')[1] || '').split(',').filter(Boolean).map(Number);
+      const r = await pg.ev(`__trainRun(${k}, ${sx}, ${n})`);
+      if (!r) { if (pass === 0) console.log(`  trainrun ${k}: 見つからない`); }
+      else {
+        if (pass === 0) console.log([`  trainrun ${k}: #${r.x.n} cars=${r.x.cars} v=${r.x.v}`, ...r.info].join('\n    '));
+        h.push(save(`trainrun-${seed}-${style}-k${k}.png`, await pg.ev(`__sheet(${JSON.stringify(r.views)})`)));
       }
     } else if (mode === 'clock') { // 時刻・天気の一覧と検証（画像なし）
       const r = await pg.ev('__clock(450000)');

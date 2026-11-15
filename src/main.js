@@ -1,11 +1,12 @@
 import { W, SY, SH, VY, VH, SUB, RAIL, state } from './state.js';
 import { STYLE, clearPal, setTone, P, R } from './palette.js';
 import { sky, skyB } from './scenery/sky.js';
-import { clouds, far, mid, near, track, plat, truss, xing, closewall, tunnel, layers } from './scenery/index.js';
+import { clouds, far, mid, near, track, plat, truss, xing, closewall, train, tunnel, layers } from './scenery/index.js';
 import { bridgeNear, poleOnBridge } from './scenery/bridge.js';
 import { tunnelNear, tunnelCovers, poleInTunnel, tunnelGlass } from './scenery/tunnel.js';
 import { drawCrossingNearLamps, crossingClose, poleOnCrossing } from './scenery/crossing.js';
 import { wallClose, drawSelfReflection } from './scenery/closewall.js';
+import { trainClose } from './scenery/train.js';
 import { drawDoorBackdrop } from './scenery/station.js';
 import { stationNear } from './stations.js';
 import { interior, drawInterior, drawStraps, drawDoors, doorShift, DOOR_W } from './interior.js';
@@ -136,6 +137,8 @@ function render() {
     R(cx, sx - 12, SY + 3 + cant, 30, 2, '#4b5350');
   }
   });
+  // 対向列車（隣の線路。線路際・架線柱より手前で、屋根より上は透明なので架線は屋根の上を通って見える）。対向列車の近くでだけ描く
+  if (trainClose(dist + W / 2)) lay(train);
   fall(2);
   }
   // 駅のホーム（架線より手前）。駅の近くでだけ描く
