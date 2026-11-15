@@ -12,21 +12,20 @@ import { crossingNear } from './crossings.js';
    K は固定（1件ごとに変えると層の視差が件ごとに変わるため）。だから自車が遅いと相手も遅く見え、停車すると止まる → 減速・停車・発車加速の区間には置かない。
    座標は駅・踏切と同じ線路際（視差 1.0）の走行距離 d（窓の中央の地点）。
    1件: { n（通し番号 1〜）, a（先頭が窓の中央に来る地点）, b（最後尾が窓の中央に来る地点）, c（中ほど）, cars（両数）, len（層の通し座標での長さ）,
-          v（見込んだ自車の速さ。両数を決めるのに使った値）, h（絵づくり用の 32bit ハッシュ） }
+          v（見込んだ自車の速さ。駅の余白と V_MIN の判定に使った値）, h（絵づくり用の 32bit ハッシュ） }
    先頭は層の通し座標の左端（a の側）。窓の右端から先頭が入り、左端へ最後尾が出ていく。
-   FRAME ドットの枠 k ごとに hash32(seed, SALT_TRAIN, k) の乱数を必ず4回引いて（置くか・枠内の位置・通過にかける秒数・h）、置かない枠でも回数を変えない。
-   両数は「見込んだ速さ v で通過がおよそ T 秒になる数」（T は乱数）。出現率は中心の world() の重みで混ぜる。
+   FRAME ドットの枠 k ごとに hash32(seed, SALT_TRAIN, k) の乱数を必ず4回引いて（置くか・枠内の位置・両数・h）、置かない枠でも回数を変えない。
+   両数は乱数で CARS の範囲から等確率に選ぶ（ユーザーの方針、2026-11-16: 編成の長さはランダム）。出現率は中心の world() の重みで混ぜる。
    駅の減速・停車・発車加速の区間、橋・トンネル、踏切、前の件の近く、出発直後に当たったら置かない（ずらさない）。高架・カーブ・至近の建物とは重なってよい。 */
 export const TRAIN_K = 1.0;               // 対向列車の速さ ÷ 自車の速さ
-export const TRAIN_F0 = 1.3;              // 見かけの視差（隣の線路: 線路際 1.0・架線柱 1.2 より手前）
-export const TRAIN_F = TRAIN_F0 * (1 + TRAIN_K); // 層の視差 2.6
-export const TRAIN = { car: 298, gap: 6 }; // 1両の長さ、連結のすき間（層のドット）
+export const TRAIN_F0 = 1.5;              // 見かけの視差（隣の線路: 線路際 1.0・架線柱 1.2 より手前）
+export const TRAIN_F = TRAIN_F0 * (1 + TRAIN_K); // 層の視差 3.0
+export const TRAIN = { car: 480, gap: 12 }; // 1両の長さ、連結のすき間（層のドット）
 const SALT_TRAIN = 9401; // hash32(seed, SALT_TRAIN, 枠の番号)。31, 77, 78, 88, 91〜97, 9001〜9003, 9101, 9102, 9200〜, 9301, 9350 と vnoise の salt は使用済み
 const FRAME = 5000;      // 枠の長さ
 const START = 3000;      // これより手前（出発直後）には置かない
 const P = { city: 0.8, resi: 0.75, suburb: 0.5, rural: 0.25, mount: 0.06, sea: 0.06 }; // 枠ごとの出現率（中心の重みで混ぜる）
-const T_PASS = [1.9, 2.7]; // 通過にかける秒数の目安（先頭が窓の右端に入ってから最後尾が左端を出るまで）
-const CARS = [2, 6];     // 両数の範囲
+const CARS = [2, 8];     // 両数の範囲（等確率。巡航 230 で通過は約 1.9〜6.2 秒）
 const V_MIN = 165;       // 見込んだ速さがこれより遅い所（きついカーブの前後）には置かない
 /* 駅: 停車位置 pos（state.dist）の手前 brake(v)・後ろ after(v) の区間に、列車が窓に見えている state.dist が入ったら置かない。
    journey.js は import できない（循環）ので、減速度・加速度の近似の式で（shots の journey mode で測った値: 巡航 230 で減速の開始は 4200〜4700 手前、
@@ -77,8 +76,7 @@ function genFrame(k) {
   const e = world(c);
   let p = 0; for (const key in P) p += e[key] * P[key];
   if (u >= p) return;
-  const v = estSpeed(c), T = T_PASS[0] + (T_PASS[1] - T_PASS[0]) * tu;
-  const cars = Math.min(CARS[1], Math.max(CARS[0], Math.round((T * TRAIN_F * v - W) / (TRAIN.car + TRAIN.gap))));
+  const v = estSpeed(c), cars = CARS[0] + Math.min(CARS[1] - CARS[0], Math.floor(tu * (CARS[1] - CARS[0] + 1)));
   const len = trainLen(cars), half = Math.round(len / TRAIN_F / 2), a = c - half, b = c + half;
   if (!ok(a, b, v)) return;
   list.push(Object.freeze({ n: list.length + 1, a, b, c, cars, len, v: Math.round(v), h }));
