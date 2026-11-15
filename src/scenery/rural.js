@@ -1,6 +1,6 @@
 import { SH } from '../state.js';
 import { ri, pick, vnoise } from '../rng.js';
-import { R, shade, tint, ink, ell, GREENS, HOUSE_WALL, ROOF, WIN_D, WATER, RICE, AZE, SOIL, GRASS, HILL_BACK, HILL_FRONT, VINYL, VINYL_RIB } from '../palette.js';
+import { R, shade, tint, ink, ell, GREENS, HOUSE_WALL, ROOF, WIN_D, WATER, RICE, AZE, SOIL, GRASS, HILL_RANGE, HILL_FRONT, VINYL, VINYL_RIB } from '../palette.js';
 import { env } from '../layers.js';
 import { hz, tree, midTree, torii } from './common.js';
 import { win, lamp } from '../lights.js';
@@ -42,7 +42,7 @@ export function paddyGround(g, r, x, w, y0, rows, far) {
 
 /* 遠景の山並み: レイヤーの通し座標のノイズで稜線を決める（チャンクの境目でつながる）。奥は淡く高く、手前は緑で低い */
 export function hills(g, r, L, i, base) {
-  const cw = L.cw, cb = hz(HILL_BACK, 0.3), cbl = tint(cb, 0.18), cf = hz(HILL_FRONT, 0.12), cfd = shade(cf, 0.14), front = [];
+  const cw = L.cw, cb = hz(HILL_RANGE, 0.3), cbl = tint(cb, 0.18), cf = hz(HILL_FRONT, 0.12), cfd = shade(cf, 0.14), front = [];
   for (let x = 0; x < cw; x++) {
     const X = i * cw + x, a = env(L, i, x).hill;
     const hb = Math.round(a * (6 + 24 * (0.6 * vnoise(X / 70, 21) + 0.3 * vnoise(X / 23, 22) + 0.1 * vnoise(X / 7, 23))));

@@ -106,6 +106,7 @@ export const AZE = '#5f7a45';                         // あぜ
 export const SOIL = '#a8946c', PATH = '#c2b48c';      // 畑の土、あぜ道
 export const GRASS = ['#7c9b55', '#6c9150'];          // 草地
 export const HILL_BACK = '#7f9fb0', HILL_FRONT = '#4f8a6a'; // 遠くの山並み、手前の丘
+export const HILL_RANGE = '#648f93'; // 田園・郊外の奥の山並み（hills）。遠景の建物（city.js の F1 / F2）と重なっても見分けがつくよう、HILL_BACK より少し暗く緑寄り
 export const VINYL = '#e9eef0', VINYL_RIB = '#b9c7c6'; // ビニールハウス
 export const TORII = '#c94f3f';
 /* 山間の色 */
