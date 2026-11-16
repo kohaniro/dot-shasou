@@ -4,7 +4,7 @@
 
 ## 状態とモジュールの依存
 
-- **モジュールの依存方向**: `state.js`（何も import しない。画面寸法の定数と共有の可変状態 `state`）← `rng.js` ← `world.js` / `palette.js` （`clock.js` は `world.js` の隣、`lights.js` は `palette.js` の次、`tone.js` は `scenery/index.js` の次、`weather.js` は `layers.js` の後）← `stations.js`（駅データ）← `features.js`（トンネル・橋の位置）← `course.js`（線形: カーブ・高架・制限速度）← `crossings.js`（踏切の位置）← `closewalls.js`（至近の建物の位置）← `trains.js`（対向列車の位置）← `layers.js` ← `scenery/*` ← `scenery/index.js`（レイヤーの実体 `layers`）← `journey.js`（進行。`stations.js` と `audio.js` を使う。`audio.js` は `features.js` / `crossings.js` / `trains.js` を使う）← `ui.js` ← `main.js`。循環 import を作らないこと。`ui.js` は `main.js` を import せず、`render` / `rebuild` は `initUI(render, rebuild)` で受け取る。
+- **モジュールの依存方向**: `state.js`（何も import しない。画面寸法の定数と共有の可変状態 `state`）← `rng.js` ← `world.js` / `palette.js` （`clock.js` と `carstyle.js`（車内のバリエーションの表）は `world.js` の隣、`lights.js` は `palette.js` の次、`tone.js` は `scenery/index.js` の次、`weather.js` は `layers.js` の後）← `stations.js`（駅データ）← `features.js`（トンネル・橋の位置）← `course.js`（線形: カーブ・高架・制限速度）← `crossings.js`（踏切の位置）← `closewalls.js`（至近の建物の位置）← `trains.js`（対向列車の位置）← `layers.js` ← `scenery/*` ← `scenery/index.js`（レイヤーの実体 `layers`）← `journey.js`（進行。`stations.js` と `audio.js` を使う。`audio.js` は `features.js` / `crossings.js` / `trains.js` を使う）← `ui.js` ← `main.js`。循環 import を作らないこと。`ui.js` は `main.js` を import せず、`render` / `rebuild` は `initUI(render, rebuild)` で受け取る。
 - **共有状態の書き換え**: `seed`・`dist`・`t`・`speed` などは `state.xxx` として読み書きする。`STYLE`（`palette.js`）と音の状態（`audio.js`）は `export let` なので、外からは `setStyle()` / `setSoundOn()` / `setVolume()` 経由で変える。
 
 ## 決定的生成
@@ -66,6 +66,7 @@
 
 - **絵柄の仕組み**: 色はすべて `R()`（矩形描画）内で `P(color)` を通り、`STYLES[*].pal` が色を差し替える（結果は `palCache`）。**新しい描画コードも必ず `R()` か `P()` を通すこと**。直接 `fillStyle` を設定すると絵柄切り替えに追従しない。`outline`（輪郭線 `ink()`）と `glass`（窓の映り込み）も絵柄ごとのフラグ。
 - **描画の重ね順**: 空 → 雲・遠景・中景・近景 → 至近の建物と自車の映り込み → 線路際 → 架線 → 対向列車 → ホーム → トラス → 踏切の至近の層とその灯 → トンネルの壁 → ガラスの映り込み → 車内（`drawInterior()` で別キャンバスに一度だけ描き、窓を `clearRect` で抜いたもの）→ ドアの外の描き足し・扉（`drawDoors(g, state.door)`、毎フレーム）→ つり革・乗客（毎フレーム描画）。
+- **車内のバリエーション**（`carstyle.js`。`state.js` / `rng.js` だけに依存し DOM に触れない）: `carStyle(seed)` が路線ごとの車両を決める純粋な関数（専用の乱数 `rng(hash32(seed, 9601, 0))` を要素ごとに1回ずつ、いつも同じ順・回数で引く。足すときは末尾に）。要素は 座席のモケットの色 6（青・緑・えんじ・黄土・灰紫・紺。影とハイライトは `shade` / `tint`、青だけ元の手で選んだ色）× 模様 3（点の格子・細い縦縞・無地＋席ごとの丸み）、優先席 4 割（片端の2席 = 端から手すり x 111 / 207 の脇まで、を灰・赤紫・青緑のどれかで上から塗り直す。座席に似た色は避ける。上のつり革2本も黄のベルト・橙の輪に）、つり革の形 3（丸・三角・角の丸い四角。8×8 以内の行の表）× 輪の色 3 × ベルトの色 3、壁 3（クリーム・白・淡灰）、袖仕切り 3（低・高いすりガラス・角の丸い板。扉脇の縦の手すりは仕切りの上端まで）。どの表も先頭が元の車内で、全部が先頭のとき（例 `#line-14224`）は元と1ピクセルも変わらない。座席の寸法・手すり・扉・窓の位置、広告の乱数 `rng(20261113)` は変えない。床・座席の下は画面の外なので変えていない。描き直し: 車内は別キャンバスに一度だけ描くので、`setSeed()`（起動・「別の路線」・`hashchange`）と `rebuild()`（絵柄の変更）が `drawInterior()` を呼ぶ。つり革は毎フレーム `carStyle()`（シードでメモ化）を読む。デバッグの状態表示に「車両 …」。自車の映り込み・対向列車の帯（`SELF.BAND`）は外装なので追従させない。
 
 ## 駅と乗客
 

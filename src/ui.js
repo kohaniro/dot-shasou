@@ -2,6 +2,7 @@ import { state } from './state.js';
 import { STYLES, setStyle } from './palette.js';
 import { layers } from './scenery/index.js';
 import { genPassengers } from './passengers.js';
+import { drawInterior } from './interior.js';
 import { jumpTo } from './journey.js';
 import { reset as resetCrossings } from './crossings.js';
 import { ac, master, soundOn, volume, setSoundOn, setVolume, initAudio, syncAudio } from './audio.js';
@@ -14,6 +15,7 @@ export function setSeed(n) {
   jumpTo(0); // 進行を出発地点（最初の駅へ向かって巡航中）に置き直す。state.dist = 0、継ぎ目の予約の破棄もここで
   layers.forEach(l => l.clear());
   genPassengers();
+  drawInterior(); // 車内の絵（座席の色・つり革など）は路線ごとに違う（carstyle.js）
   lineLabel.textContent = '路線 ' + String(state.seed).padStart(4, '0');
 }
 export function seedFromHash() { const m = /^#line-(\d{1,6})$/.exec(location.hash); return m ? parseInt(m[1], 10) : null; }

@@ -9,6 +9,7 @@ import { trainNear, nextTrain } from './trains.js';
 import { TOD, DAWN, DUSK, nextTimePoint, nextWeatherPoint } from './clock.js';
 import { cruiseAt, stopDistIn, jumpTo } from './journey.js';
 import { passengers } from './passengers.js';
+import { carLabel } from './carstyle.js';
 import { driveAudio, syncAudio } from './audio.js';
 
 /* ---------- デバッグ用の操作（早送り・ジャンプ）と状態の表示 ----------
@@ -107,7 +108,7 @@ function info() {
   const sg = v => (v > 0 ? '+' : '') + v.toFixed(2);
   return `距離 ${Math.floor(state.dist)} ／ ${ws} ／ ${PNAME[state.phase] || state.phase} ${Math.round(state.speed * 0.36)}km/h（目標 ${Math.round(cruiseAt(state.dist, st ? st.pos : Infinity) * 0.36)}）` +
     ` ／ カーブ ${sg(state.curve)} 高架 ${state.elev.toFixed(2)}` +
-    (st ? ` ／ ${st.name} まで ${Math.max(0, Math.round(st.pos - state.dist))}` : '') + (fi ? ` ／ ${fi}` : '') + (xi ? ` ／ ${xi}` : '') + (wi ? ` ／ ${wi}` : '') + (ti ? ` ／ ${ti}` : '') + ` ／ 乗客 ${passengers.length}人 ／ ${toneInfo()}`;
+    (st ? ` ／ ${st.name} まで ${Math.max(0, Math.round(st.pos - state.dist))}` : '') + (fi ? ` ／ ${fi}` : '') + (xi ? ` ／ ${xi}` : '') + (wi ? ` ／ ${wi}` : '') + (ti ? ` ／ ${ti}` : '') + ` ／ 乗客 ${passengers.length}人 ／ 車両 ${carLabel()} ／ ${toneInfo()}`;
 }
 
 /* 初期化。毎フレーム呼ぶ関数 tick(now) を返す（表示している間だけ、0.25 秒に1回表示を更新する） */
