@@ -70,6 +70,8 @@ const search = (arr, x) => { let lo = 0, hi = arr.length - 1; while (hi - lo > 1
 const tauOfS = s => search(BS, Math.max(0, s));
 /* 速度 v から止まるのに要る距離 */
 export const brakeDist = v => lerpAt(BS, search(BV, Math.max(0, v)));
+/* 減速中、止まるまで残り t 秒の地点から駅までの距離 */
+export const stopDistIn = t => lerpAt(BS, Math.max(0, t));
 
 let tau = 0, departT = 0;
 

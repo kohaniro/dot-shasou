@@ -2,19 +2,19 @@ import { W, state } from './state.js';
 import { world, BIOME_KEYS } from './world.js';
 import { stationAt } from './stations.js';
 import { featureNear, nextFeature } from './features.js';
-import { nextCurve, nextElev, V_MAX } from './course.js';
+import { nextCurve, nextElev } from './course.js';
 import { crossingNear, nextCrossing } from './crossings.js';
 import { wallNear, nextWall } from './closewalls.js';
 import { trainNear, nextTrain } from './trains.js';
 import { TOD, DAWN, DUSK, nextTimePoint, nextWeatherPoint } from './clock.js';
-import { cruiseAt, brakeDist, jumpTo } from './journey.js';
+import { cruiseAt, stopDistIn, jumpTo } from './journey.js';
 import { passengers } from './passengers.js';
 import { driveAudio, syncAudio } from './audio.js';
 
 /* ---------- デバッグ用の操作（早送り・ジャンプ）と状態の表示 ----------
    URL のクエリに debug があるときだけ出す（例: /?debug#line-1234）。無ければ何もせず null を返す。
    「いまの地点」は窓の中央に見えている地点 state.dist + W/2（駅の pos + W/2、layers.js の env() と同じ基準） */
-const STEP = 50, FAR = 400000, FULL = 0.8, AHEAD = 400;
+const STEP = 50, FAR = 400000, FULL = 0.8, STOP_IN = 15;
 const top = e => BIOME_KEYS.reduce((a, k) => e[k] > e[a] ? k : a, BIOME_KEYS[0]);
 
 /* 次のバイオームの地点（窓の中央の座標）: 最大のバイオームが替わり、その重みが FULL 以上になった最初の地点。
@@ -31,12 +31,12 @@ export function nextBiomePoint(c0) {
   }
   return bestD;
 }
-/* 次の駅の手前: 向かっている駅の減速が始まる地点（あり得る最高速度 V_MAX で走ってきた場合）のさらに AHEAD ドット手前（state.dist の値）。
-   すでに過ぎている（減速中・停車中を含む）なら、その次の駅 */
+/* 次の駅の手前: 向かっている駅へ減速している途中の、止まるまで残り STOP_IN 秒の地点（state.dist の値）。
+   すでに過ぎている（停車中を含む）なら、その次の駅 */
 export function beforeStation() {
-  const at = st => st.pos - brakeDist(V_MAX) - AHEAD;
+  const at = st => Math.max(0, st.pos - stopDistIn(STOP_IN));
   let st = state.station;
-  if (state.phase === 'brake' || state.phase === 'stop' || state.dist >= at(st)) st = stationAt(st.k + 1);
+  if (state.phase === 'stop' || state.dist >= at(st) - 1) st = stationAt(st.k + 1);
   return at(st);
 }
 
