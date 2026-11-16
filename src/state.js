@@ -11,7 +11,7 @@ export const state = {
   // 進行（journey.js が書き換える）: phase 'run' | 'brake' | 'stop' | 'depart'、station は stations.js の駅オブジェクト
   phase: 'run', station: null, stopT: 0, door: 0, accel: 0,
   // 線形（course.js）: curve −1..1（正 = 窓がカーブの外側）と elev 0..1（高架）は窓の中央の地点の値で、main.js の render() が書く。
-  // lean は curve をなめらかに追わせた値（つり革の傾き。journey.js が書く）
+  // lean は curve をなめらかに追わせた値（つり革の傾きと、窓の外の傾き main.js の tiltBands。journey.js が書く）
   curve: 0, elev: 0, lean: 0,
   // 時間帯と天気（clock.js）。todFix / wxFix はデバッグ用の固定（null = 自動。todFix は時刻の数値、wxFix は 'clear' | 'cloud' | 'rain' | 'snow'。'rain:0.5' のように強さも付けられる）。
   // hour（0..24）と wx（{ cloud, rain, snow } 各 0..1）は窓の中央の地点の連続値、tone は景色に今かかっているトーン（段階に丸めた値。tone.js）。
