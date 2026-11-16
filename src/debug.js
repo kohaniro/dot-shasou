@@ -87,17 +87,25 @@ function trainInfo(c) {
 export const beforeTime = hour => nextTimePoint(state.dist + W / 2 + BEFORE + 1, hour) - W / 2 - BEFORE;
 export function beforeWeather() { const d = nextWeatherPoint(state.dist + W / 2 + BEFORE + 1); return d === null ? null : d - W / 2 - BEFORE; }
 const clock = h => { const m = Math.floor(h * 60 + 1e-6); return String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+/* トーンの key（段階.曇り.雨雪の種類と強さ、tone.js）を読める形に。段階は 0 昼 → 1〜19 夕 → 20 夜 → 21〜39 朝 */
+function toneName(k) {
+  const [s, c, f] = k.split('.'), st = +s;
+  const tod = st === 0 ? '昼' : st < 20 ? '夕' + st : st === 20 ? '夜' : '朝' + (st - 20);
+  return tod + '・曇' + c + (f ? '・' + (f[0] === 's' ? '雪' : '雨') + f.slice(1) : '');
+}
 function toneInfo() {
   const w = state.wx, tn = state.tone, f = v => v.toFixed(2);
-  return `${clock(state.hour)}${state.todFix != null ? '（固定）' : ''} ／ cloud ${f(w.cloud)} rain ${f(w.rain)} snow ${f(w.snow)}${state.wxFix ? '（固定）' : ''}` +
-    (tn ? ` ／ トーン ${tn.key}` + (state.toneTo ? ` → ${state.toneTo.key} ${Math.round(state.toneK * 100)}%` : '') : '');
+  return `時刻 ${clock(state.hour)}${state.todFix != null ? '（固定）' : ''} ／ 雲 ${f(w.cloud)} 雨 ${f(w.rain)} 雪 ${f(w.snow)}${state.wxFix ? '（固定）' : ''}` +
+    (tn ? ` ／ 色調 ${toneName(tn.key)}` + (state.toneTo ? ` → ${toneName(state.toneTo.key)} ${Math.round(state.toneK * 100)}%` : '') : '');
 }
+const BNAME = { city: '都心', resi: '住宅街', suburb: '郊外', rural: '田園', mount: '山間', sea: '海沿い' };
+const PNAME = { run: '巡航', brake: '減速', stop: '停車', depart: '発車' };
 function info() {
   const c = state.dist + W / 2, e = world(c), st = state.station, fi = featInfo(c), xi = xingInfo(c), wi = wallInfo(c), ti = trainInfo(c);
-  const ws = BIOME_KEYS.filter(k => e[k] >= 0.05).map(k => k + ' ' + e[k].toFixed(2)).join(' ');
+  const ws = BIOME_KEYS.filter(k => e[k] >= 0.05).map(k => (BNAME[k] || k) + ' ' + e[k].toFixed(2)).join(' ');
   const sg = v => (v > 0 ? '+' : '') + v.toFixed(2);
-  return `距離 ${Math.floor(state.dist)} ／ ${ws} ／ ${state.phase} ${Math.round(state.speed * 0.36)}km/h（目標 ${Math.round(cruiseAt(state.dist, st ? st.pos : Infinity) * 0.36)}）` +
-    ` ／ curve ${sg(state.curve)} elev ${state.elev.toFixed(2)}` +
+  return `距離 ${Math.floor(state.dist)} ／ ${ws} ／ ${PNAME[state.phase] || state.phase} ${Math.round(state.speed * 0.36)}km/h（目標 ${Math.round(cruiseAt(state.dist, st ? st.pos : Infinity) * 0.36)}）` +
+    ` ／ カーブ ${sg(state.curve)} 高架 ${state.elev.toFixed(2)}` +
     (st ? ` ／ ${st.name} まで ${Math.max(0, Math.round(st.pos - state.dist))}` : '') + (fi ? ` ／ ${fi}` : '') + (xi ? ` ／ ${xi}` : '') + (wi ? ` ／ ${wi}` : '') + (ti ? ` ／ ${ti}` : '') + ` ／ 乗客 ${passengers.length}人 ／ ${toneInfo()}`;
 }
 
