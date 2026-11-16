@@ -49,9 +49,8 @@ export function drawInterior() {
   S(158, 28, 4, 76, fr); VL(158, 28, 76, frL); VR(162, 28, 76, frD);
   // wall under window
   S(44, 106, 232, 4, wall); S(44, 109, 232, 1, wallSh);
-  // seat back + cushion（7人掛け x 46〜274。優先席は片端の2席 = 端から手すり x 111 / 207 の脇まで、を上から塗り直す）
+  // seat back + cushion（7人掛け x 46〜274）
   bench(g, 46, 274, seatCols(car.seat), car.pattern);
-  if (car.prio) bench(g, car.prio.side < 0 ? 46 : 209, car.prio.side < 0 ? 111 : 274, seatCols(car.prio), car.pattern);
   // seat base / heater
   S(46, 148, 228, 9, '#8f9496'); HL(46, 148, 228, '#5d6266');
   for (let x = 50; x < 270; x += 4) { S(x, 151, 2, 1, '#5d6266'); S(x, 153, 2, 1, '#5d6266'); }
@@ -137,15 +136,14 @@ const RING = [[2, 4], [1, 1, 6, 1], [0, 1, 7, 1], [0, 1, 7, 1], [0, 1, 7, 1], [0
 const TRI = [[3, 2], [2, 1, 5, 1], [2, 1, 5, 1], [1, 1, 6, 1], [1, 1, 6, 1], [0, 1, 7, 1], [0, 8], [0, 8]];
 const SQR = [[1, 6], [0, 1, 7, 1], [0, 1, 7, 1], [0, 1, 7, 1], [0, 1, 7, 1], [0, 8], [0, 8], [1, 6]];
 const SHAPES = { 丸: RING, 三角: TRI, 角: SQR };
-const PRIO_RING = '#ee9a3a', PRIO_BELT = { c: '#e3bf3c', d: '#b0912c' }; // 優先席の上のつり革
 export function drawStraps(g, t, jolt, lean = 0) {
   const y0 = 8, y1 = 30, bw = 2, rw = 8, car = carStyle(), shape = SHAPES[car.strap];
   for (let k = 0; k < 8; k++) {
-    const x = 62 + k * 28, prio = car.prio && (car.prio.side < 0 ? k < 2 : k > 5), belt = prio ? PRIO_BELT : car.belt;
+    const x = 62 + k * 28, belt = car.belt;
     const off = Math.round(lean + Math.sin(t * 1.9 + k * 0.5) * 1.1 + jolt * Math.sin(k * 1.3 + t * 9));
     for (let y = y0; y < y1; y++) R(g, x + Math.round(off * (y - y0) / (y1 - y0)), y, bw, 1, y < y1 - 4 ? belt.c : belt.d);
     for (let p = 0; p < 2; p++) {
-      g.fillStyle = P(p ? (prio ? PRIO_RING : car.ring.c) : '#5d6266');
+      g.fillStyle = P(p ? car.ring.c : '#5d6266');
       const ox = x + off - (rw >> 1) + (bw >> 1) + (p ? 0 : 1), oy = y1 - 1 + (p ? 0 : 1);
       shape.forEach((row, j) => { for (let i = 0; i < row.length; i += 2) g.fillRect(ox + row[i], oy + j, row[i + 1], 1); });
     }
