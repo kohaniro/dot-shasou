@@ -54,32 +54,6 @@ const CANT = 2;      // カーブ: curve = ±1 のとき、空以外の全部を
 const LEAN = 3;      // つり革の傾き: state.lean = ±1 のとき、輪の位置で
 const half = v => Math.round(v * SUB) / SUB;
 
-/* カーブの傾き（絵としての演出）: state.lean = ±1 のとき、窓の中央 x=160 を軸に、画面の左右の端で ±TILT ドット上下にずらす剪断。
-   列ごとの量は整数ドット（回転の補間はしない。段の境目のジャギーはそのまま見せる）。lean > 0 で右が上がる（つり革の輪が右へ振れるのと同じ向き） */
-const TILT = 4;
-const ov = document.createElement('canvas'), ox = ov.getContext('2d');
-/* 同じずれの列をまとめた帯 [x0, x1, s]（ドット。s は下向き正）。全部 0 なら null（まっすぐ: 傾けずに直接描く） */
-function tiltBands(lean) {
-  const k = -lean * TILT / (W / 2), out = [];
-  for (let x = 0; x < W; x++) {
-    const s = Math.round(k * (x + 0.5 - W / 2)) || 0, b = out[out.length - 1];
-    if (b && b[2] === s) b[1] = x + 1; else out.push([x, x + 1, s]);
-  }
-  return out.length > 1 || out[0][2] ? out : null;
-}
-/* ox に描いた窓の外（景色の行 SY..SY+SH-2。窓の開口部 y 28〜103 を含み、カントと揺れでも必ず描かれている行）を、帯ごとにずらして cx に写す。
-   ずらしてできるすき間は、端の行を引きのばして埋める（高架の層の上のすき間と同じ考え方） */
-function tilt(bands) {
-  const A = (SY - VY) * SUB, B = (SY + SH - 2 - VY) * SUB;
-  cx.setTransform(1, 0, 0, 1, 0, 0);
-  for (const [x0, x1, s] of bands) {
-    const x = x0 * SUB, w = (x1 - x0) * SUB, d = s * SUB;
-    cx.drawImage(ov, x, A, w, B - A, x, A + d, w, B - A);
-    if (d > 0) cx.drawImage(ov, x, A, w, 1, x, A, w, d);
-    else if (d < 0) cx.drawImage(ov, x, B - 1, w, 1, x, B + d, w, -d);
-  }
-}
-
 /* ---------- frame ---------- */
 function update(dt) {
   state.t += dt;
@@ -113,22 +87,20 @@ function render() {
   const cv = curve(dist + W / 2), el = elev(dist + W / 2), cant = half(cv * CANT);
   state.curve = cv; state.elev = el;
   const oy = SY + bob + cant;
-  // カーブの傾き: 傾いているあいだは窓の外を別のキャンバスに描き、列ごとに整数ドットずらして写す（tilt()）。まっすぐのときは今までどおり直接描く
-  const bands = tiltBands(state.lean), g = bands ? ox : cx;
   // 窓の外の景色はトーン（時間帯・天気の色調）つきで描く。切り替えのクロスフェード中は、いまのトーンの絵の上に次のトーンの絵を toneK の濃さで重ねる
   // （層ごとに重ねるので、不透明なドットはちょうど2つの色の中間になる）。scene(fn) の fn(b) は b = false で今の、true で次のトーンの絵を描く
   const fadeK = state.toneTo ? Math.min(1, state.toneK) : 0;
-  const scene = fn => { fn(false); if (fadeK > 0) { g.globalAlpha = fadeK; fn(true); g.globalAlpha = 1; } };
+  const scene = fn => { fn(false); if (fadeK > 0) { cx.globalAlpha = fadeK; fn(true); cx.globalAlpha = 1; } };
   const toned = fn => scene(b => { const prev = setTone(b ? tones.b : tones.a); fn(); setTone(prev); }); // チャンクを通さず直接描く景色用
-  const lay = L => scene(b => L.render(g, viewOff(L), oy + half(L.drop * el), SY, b));
-  g.setTransform(SUB, 0, 0, SUB, 0, -VY * SUB);
+  const lay = L => scene(b => L.render(cx, viewOff(L), oy + half(L.drop * el), SY, b));
+  cx.setTransform(SUB, 0, 0, SUB, 0, -VY * SUB);
   const dark = tunnelCovers(dist); // 画面全体がトンネルの壁に隠れているあいだは、奥の景色を描かない
   // 夜の度合い（トーンの外光の強さ sun から）。自車の映り込みとガラスの映り込みで使う
   const dk = t => t ? 1 - t.sun : 0;
   if (!dark) {
-  scene(b => g.drawImage(b ? skyB : sky, 0, SY));
+  scene(b => cx.drawImage(b ? skyB : sky, 0, SY));
   // 雨脚と舞う雪は、層の間に3段で差し込む（奥は細かく、手前は長く速い。トンネルの壁・ホーム・トラスには隠れる）
-  const fall = band => { if (state.wx.rain > 0 || state.wx.snow > 0) toned(() => drawFall(g, band)); };
+  const fall = band => { if (state.wx.rain > 0 || state.wx.snow > 0) toned(() => drawFall(cx, band)); };
   lay(clouds);
   lay(far); fall(0); lay(mid); lay(near); fall(1);
   // 線路際ぎりぎりのビルの壁（近景より手前・線路際より奥。線路際の側壁・フェンスと架線・架線柱は壁の手前に来る）。至近の建物の近くでだけ描く
@@ -140,7 +112,7 @@ function render() {
       for (const [tn, k] of [[tones.a, 1 - fadeK], [tones.b, fadeK]]) {
         if (k <= 0) continue;
         const prev = setTone(tn, closewall.air), n = dk(tn);
-        drawSelfReflection(g, dist, off, oy + half(closewall.drop * el), k, n * n);
+        drawSelfReflection(cx, dist, off, oy + half(closewall.drop * el), k, n * n);
         setTone(prev);
       }
     }
@@ -150,19 +122,19 @@ function render() {
   // 架線と架線柱（隣の線路）
   toned(() => {
   const SPAN = 480, wx = Math.floor(dist * 1.2), dr = 96, dro = 48, wy = 13, my0 = 5, sag = 6;
-  g.fillStyle = P('#3d4442');
-  g.fillRect(0, oy + wy, W, 1);
+  cx.fillStyle = P('#3d4442');
+  cx.fillRect(0, oy + wy, W, 1);
   for (let x = 0; x < W; x++) {
     const p = (((wx + x) % SPAN) + SPAN) % SPAN / SPAN, yy = oy + my0 + Math.round(sag * 4 * p * (1 - p));
-    g.fillRect(x, yy, 1, 1);
-    if ((((wx + x) % dr) + dr) % dr === dro) g.fillRect(x, yy, 1, oy + wy - yy);
+    cx.fillRect(x, yy, 1, 1);
+    if ((((wx + x) % dr) + dr) % dr === dro) cx.fillRect(x, yy, 1, oy + wy - yy);
   }
   for (let k = Math.floor(wx / SPAN); k * SPAN < wx + W + 20; k++) {
     const sx = k * SPAN - wx;
     if (poleOnBridge(k * SPAN) || poleInTunnel(k * SPAN) || poleOnCrossing(k * SPAN)) continue; // 橋の上・トンネルの山の中・踏切の道の上には柱を立てない
     const py = Math.floor(SY + Math.min(0, cant)), ph = SH + 2 + Math.ceil(Math.abs(cant)); // 柱は窓の上下の端まで届かせる
-    R(g, sx, py, 4, ph, '#4b5350'); R(g, sx, py, 1, ph, '#75807c');
-    R(g, sx - 12, SY + 3 + cant, 30, 2, '#4b5350');
+    R(cx, sx, py, 4, ph, '#4b5350'); R(cx, sx, py, 1, ph, '#75807c');
+    R(cx, sx - 12, SY + 3 + cant, 30, 2, '#4b5350');
   }
   });
   // 対向列車（隣の線路。線路際・架線柱より手前で、屋根より上は透明なので架線は屋根の上を通って見える）。対向列車の近くでだけ描く
@@ -174,11 +146,9 @@ function render() {
   // トラス橋の鉄骨（架線より手前）。橋の近くでだけ描く
   if (bridgeNear(dist + W / 2)) lay(truss);
   // 踏切のこちら側の警報機・遮断機（架線より手前）。踏切の近くでだけ描く。灯の点滅は毎フレーム重ねる
-  if (crossingClose(dist + W / 2)) { lay(xing); drawCrossingNearLamps(g, dist, oy, t); }
+  if (crossingClose(dist + W / 2)) { lay(xing); drawCrossingNearLamps(cx, dist, oy, t); }
   // トンネルの壁と坑門（架線より手前）。トンネルの近くでだけ描く
   if (dark || tunnelNear(dist + W / 2)) lay(tunnel);
-  if (bands) tilt(bands);
-  cx.setTransform(SUB, 0, 0, SUB, 0, -VY * SUB);
   // ガラスの映り込み
   if (STYLE.glass) {
     cx.globalAlpha = 0.08; cx.fillStyle = '#ffffff';
@@ -227,7 +197,7 @@ initUI(render, rebuild);
 const debugTick = initDebug(render); // デバッグの行（「デバッグ」ボタンか ?debug で出す。表示している間だけ状態を更新する）
 const h0 = seedFromHash();
 setSeed(h0 !== null ? h0 : 1000 + Math.floor(Math.random() * 9000));
-cv.width = ov.width = W * SUB; cv.height = ov.height = VH * SUB; cx.imageSmoothingEnabled = ox.imageSmoothingEnabled = false;
+cv.width = W * SUB; cv.height = VH * SUB; cx.imageSmoothingEnabled = false;
 rebuild(); fit();
 update(0.016); render();
 if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) setPlaying(false);
