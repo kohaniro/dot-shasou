@@ -69,6 +69,8 @@ function planOf(st) {
   if (!p) { p = makePlan(st); plans.set(st.k, p); if (plans.size > 6) plans.delete(plans.keys().next().value); }
   return p;
 }
+/* 駅 st の上屋の範囲（この層の通し座標 [x0, x1]。画面 x = 通し座標 − floor(dist × PLAT_F)）。上屋の無い駅は null（sunlight.js が車内の日差しをさえぎるのに使う） */
+export const roofSpan = st => planOf(st).roof;
 function makePerson(r, x) {
   const q = r();
   return {

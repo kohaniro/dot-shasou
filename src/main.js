@@ -11,6 +11,7 @@ import { drawDoorBackdrop } from './scenery/station.js';
 import { stationNear } from './stations.js';
 import { interior, drawInterior, drawStraps, drawDoors, doorShift, DOOR_W } from './interior.js';
 import { drawPassengers } from './passengers.js';
+import { drawSunlight } from './sunlight.js';
 import { ac, soundOn, click, driveAudio } from './audio.js';
 import { featureMix } from './features.js';
 import { curve, elev } from './course.js';
@@ -51,7 +52,7 @@ function scheduleHits() {
 
 /* カーブと高低差で、窓の外の絵を上下にずらす量（ドット。半ドット刻みに丸めて使う） */
 const CANT = 2;      // カーブ: curve = ±1 のとき、空以外の全部を一様に。正（窓がカーブの外側）で景色が下がる
-const LEAN = 3;      // つり革の傾き: state.lean = ±1 のとき、輪の位置で
+const LEAN = 5.5;    // つり革の傾き: state.lean = ±1 のとき、輪の位置で（カーブではっきり振れるよう 3 から上げた。直線では lean = 0 なので変わらない）
 const half = v => Math.round(v * SUB) / SUB;
 
 /* ---------- frame ---------- */
@@ -169,6 +170,7 @@ function render() {
   if (dsh > 0) toned(() => { drawDoorBackdrop(cx, state.station, 0, dsh); drawDoorBackdrop(cx, state.station, W - dsh, dsh); });
   drawDoors(cx, dsh / DOOR_W);
   cx.drawImage(interior, 0, 0);
+  drawSunlight(cx); // 晴れた昼、背中側の窓から向かいの座席・腰板に落ちる日の光（カーブで向きが変わると横へ滑る。乗客はその手前）
   drawPassengers(cx, t);
   drawStraps(cx, t, bob ? 0.5 : 0, state.lean * LEAN);
 }
