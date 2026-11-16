@@ -12,7 +12,8 @@ import { passengers } from './passengers.js';
 import { driveAudio, syncAudio } from './audio.js';
 
 /* ---------- デバッグ用の操作（早送り・ジャンプ）と状態の表示 ----------
-   URL のクエリに debug があるときだけ出す（例: /?debug#line-1234）。無ければ何もせず null を返す。
+   操作の行の「デバッグ」ボタンで出し入れする。URL のクエリに debug があれば最初から出す（例: /?debug#line-1234）。
+   出し入れに合わせて URL の ?debug も書き換える（再読み込みしても同じ状態）。隠すときは速度・時間帯・天気の固定を自動に戻す。
    「いまの地点」は窓の中央に見えている地点 state.dist + W/2（駅の pos + W/2、layers.js の env() と同じ基準） */
 const STEP = 50, FAR = 400000, FULL = 0.8, STOP_IN = 15;
 const top = e => BIOME_KEYS.reduce((a, k) => e[k] > e[a] ? k : a, BIOME_KEYS[0]);
@@ -91,7 +92,7 @@ const clock = h => { const m = Math.floor(h * 60 + 1e-6); return String(Math.flo
 function toneName(k) {
   const [s, c, f] = k.split('.'), st = +s;
   const tod = st === 0 ? '昼' : st < 20 ? '夕' + st : st === 20 ? '夜' : '朝' + (st - 20);
-  return tod + '・曇' + c + (f ? '・' + (f[0] === 's' ? '雪' : '雨') + f.slice(1) : '');
+  return tod + '・曇' + c + (/^[rs]/.test(f) ? '・' + (f[0] === 's' ? '雪' : '雨') + f.slice(1) : '');
 }
 function toneInfo() {
   const w = state.wx, tn = state.tone, f = v => v.toFixed(2);
@@ -109,12 +110,11 @@ function info() {
     (st ? ` ／ ${st.name} まで ${Math.max(0, Math.round(st.pos - state.dist))}` : '') + (fi ? ` ／ ${fi}` : '') + (xi ? ` ／ ${xi}` : '') + (wi ? ` ／ ${wi}` : '') + (ti ? ` ／ ${ti}` : '') + ` ／ 乗客 ${passengers.length}人 ／ ${toneInfo()}`;
 }
 
-/* 初期化。デバッグ表示が有効なら、毎フレーム呼ぶ関数 tick(now) を返す（表示の更新は 0.25 秒に1回） */
+/* 初期化。毎フレーム呼ぶ関数 tick(now) を返す（表示している間だけ、0.25 秒に1回表示を更新する） */
 export function initDebug(render) {
-  if (!new URLSearchParams(location.search).has('debug')) return null;
   const row = document.getElementById('debug'), rateSel = document.getElementById('dbg-rate'), out = document.getElementById('dbg-info');
+  const btn = document.getElementById('btn-debug');
   if (!row) return null;
-  row.hidden = false;
   const show = () => { const s = info(); if (s !== out.textContent) out.textContent = s; };
   const jump = d => { jumpTo(d); if (!state.playing) render(); show(); };
   // 再生速度のボタン（停止 = 0。停止中も描画は続くので、移動のボタンの結果はその場で見える）
@@ -139,19 +139,37 @@ export function initDebug(render) {
   // 時間帯・天気の固定（自動 = 走行距離から決まる値。固定を替えると、次の描画でフェードせずにその色調へ替わる。停止中でも替わる）
   const fixRow = (id, attr, set) => {
     const bs = [...document.querySelectorAll('#' + id + ' button[data-' + attr + ']')];
-    for (const b of bs) b.addEventListener('click', () => {
-      set(b.dataset[attr]);
-      for (const o of bs) o.setAttribute('aria-pressed', String(o === b));
-      if (!state.playing) render(); show();
-    });
+    const choose = b => { set(b.dataset[attr]); for (const o of bs) o.setAttribute('aria-pressed', String(o === b)); };
+    for (const b of bs) b.addEventListener('click', () => { choose(b); if (!state.playing) render(); show(); });
+    return () => { const a = bs.find(b => b.dataset[attr] === 'auto'); if (a) choose(a); }; // 自動に戻す
   };
-  fixRow('dbg-tod', 'tod', v => { state.todFix = v === 'auto' ? null : TOD[v]; });
-  fixRow('dbg-wx', 'wx', v => { state.wxFix = v === 'auto' ? null : v; });
+  const resetTod = fixRow('dbg-tod', 'tod', v => { state.todFix = v === 'auto' ? null : TOD[v]; });
+  const resetWx = fixRow('dbg-wx', 'wx', v => { state.wxFix = v === 'auto' ? null : v; });
   for (const [id, at] of [['dbg-dusk', () => beforeTime(DUSK[0])], ['dbg-dawn', () => beforeTime(DAWN[0])], ['dbg-wxnext', beforeWeather]]) {
     const b = document.getElementById(id);
     if (b) b.addEventListener('click', () => { const d = at(); if (d !== null) jump(d); });
   }
+  // 出し入れ。隠すときは早送り・停止と時間帯・天気の固定を戻す（見えない設定が残らないように）
+  const setShown = on => {
+    row.hidden = !on;
+    if (btn) btn.setAttribute('aria-pressed', String(on));
+    if (!on) {
+      if (state.rate !== 1) setRate(1);
+      const fixed = state.todFix != null || state.wxFix != null;
+      resetTod(); resetWx();
+      if (fixed && !state.playing) render();
+    } else show();
+    try { // ?debug を付け外しする（ほかのクエリと #line-xxxx はそのまま）
+      const q = location.search.slice(1).split('&').filter(p => p && p.split('=')[0] !== 'debug');
+      if (on) q.push('debug');
+      history.replaceState(history.state, '', location.pathname + (q.length ? '?' + q.join('&') : '') + location.hash);
+    } catch (e) {}
+  };
+  if (btn) btn.addEventListener('click', () => setShown(row.hidden));
+  const on0 = new URLSearchParams(location.search).has('debug');
+  row.hidden = !on0;
+  if (btn) btn.setAttribute('aria-pressed', String(on0));
   let last = -1e9;
-  show();
-  return now => { if (now - last >= 250) { last = now; show(); } };
+  if (on0) show();
+  return now => { if (!row.hidden && now - last >= 250) { last = now; show(); } };
 }

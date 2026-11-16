@@ -194,7 +194,7 @@ if (window.ResizeObserver) new ResizeObserver(fit).observe(stage);
 
 /* ---------- boot ---------- */
 initUI(render, rebuild);
-const debugTick = initDebug(render); // URL に ?debug があるときだけ有効（無ければ null）
+const debugTick = initDebug(render); // デバッグの行（「デバッグ」ボタンか ?debug で出す。表示している間だけ状態を更新する）
 const h0 = seedFromHash();
 setSeed(h0 !== null ? h0 : 1000 + Math.floor(Math.random() * 9000));
 cv.width = W * SUB; cv.height = VH * SUB; cx.imageSmoothingEnabled = false;
