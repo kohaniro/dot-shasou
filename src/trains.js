@@ -122,3 +122,10 @@ export function trainNo(k) {
   while (list.length < k && frameK * FRAME < FAR) genFrame(frameK++);
   return list[k - 1] || null;
 }
+/* 席（窓の中央の地点 d）と対向列車の関係（音用）。件の [a − margin, b + margin] に d が入るとき { s, train }、無ければ null。
+   s = (d − a) × TRAIN_F は、席の真横に来ている所の先頭からの位置（層のドット）: s < 0 は近づく前、0〜len はすれ違い中、len より大きければ去った後。
+   席から見た相手の速さは 自車の速さ × TRAIN_F（層のドット/秒） */
+export function trainAt(d, margin = 300) {
+  const t = trainNear(d, margin);
+  return t ? { s: (d - t.a) * TRAIN_F, train: t } : null;
+}

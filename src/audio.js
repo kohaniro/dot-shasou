@@ -1,14 +1,16 @@
 import { W, state } from './state.js';
 import { featureMix } from './features.js';
 import { crossingAt } from './crossings.js';
+import { trainAt, TRAIN, TRAIN_F } from './trains.js';
 
 /* ---------- audio (Web Audio 合成) ---------- */
 /* 音量の定数はここにまとめる（耳で確かめていないので、どれも控えめ。調整はこの表だけ触ればよい） */
 export const VOL = {
   rumble: 0.55,     // 走行音（ブラウンノイズ）: 巡航時
   wind: 0.02,       // 風切り音: 巡航時
-  motor: 0.012,     // モーター音: 巡航時
-  motorAccel: 0.016,// 発車の加速中に足す分
+  motor: 0.016,     // モーター音: 巡航時
+  motorAccel: 0.024,// 発車の加速中に足す分
+  vvvf: 0.015,      // インバーター音「ウィーン」（発車の加速の強さ 1 で。回生ブレーキは VVVF.regen 倍）
   click: 1.0,       // 継ぎ目の音（全体の倍率）
   brake: 0.02,      // 減速終盤の摩擦音
   air: 0.05,        // 止まる瞬間の空気音
@@ -23,7 +25,10 @@ export const VOL = {
   bridgeRing: 0.35, // 鉄橋: 継ぎ目の音に足す金属の響き
   rain: 0.022,      // 雨: 窓・車体をたたく細かい雨の「サーッ」（強い雨・巡航時）
   rainRoof: 0.05,   // 雨: 屋根を打つ粒の「パラパラ」（強い雨・停車時）
-  crossing: 0.09   // 踏切の警報音「カンカン」（踏切の真横で）
+  crossing: 0.09,   // 踏切の警報音「カンカン」（踏切の真横で）
+  trainBlast: 0.9,  // 対向列車: すれ違いの瞬間の風圧「ゴォッ」（ピークで。巡航時）
+  trainRun: 0.3,    // 対向列車: 通過中の相手の走行音（巡航時）
+  trainClick: 0.7   // 対向列車: 相手の台車の継ぎ目「タタン」（巡航時）
 };
 /* トンネルの中での変わり方（どれも featureMix().tunnel に比例して効く） */
 export const TUNNEL = {
@@ -82,10 +87,88 @@ export function crossingSound(x, v) {
   const gain = Math.abs(x) >= R ? 0 : Math.max(0, (k(x) - e) / (1 - e));
   return { gain, freq: freq * (1 + v * (-x) / Math.hypot(x, y) / c) };
 }
+/* 対向列車の通過音（trainAt() の s = 席の真横の所の先頭からの位置（層のドット）で鳴らす。式は trainSound()）。
+   時間はすべて「先頭（最後尾）が席の真横を過ぎてからの秒数」で決める（席から見た相手の速さは 自車の速さ × TRAIN_F）。
+   blast: ブラウンノイズのローパス。先頭が来る直前に attack で急に立ち上がり、blastDecay で引く（ローパスも高 → 低へ下がる）
+   run: 相手の走行音（ブラウンノイズのローパス ＋ 明るめの白色ノイズのバンドパス）。先頭の少し前から鳴り、最後尾が抜けると release ですっと消える
+   click: 相手の車軸が席の真横を過ぎるたびに打つ（台車は描いていないので位置は実物の比率から: 20m の車両で台車の中心は車端から約 3.1m、軸距 2.1m） */
+export const PASSING = {
+  pre: 0.06,          // 先頭が来る前の走行音の立ち上がり（秒の時定数。隣の線路を一瞬で来るので、ごく短く）
+  preMax: 0.3,        // これより前（秒）は鳴らさない
+  attack: 0.018,      // 風圧の立ち上がり（秒の時定数）
+  blastDecay: 0.32,   // 風圧の引き（秒の時定数）
+  blastTone: [1500, 380], // 風圧のローパス（ピーク / 引いた後。Hz）
+  runLow: 650,        // 走行音のローパス（Hz。自車の走行音 180 + v ≈ 420 より明るめ）
+  hiss: 1700, hissQ: 0.6, hissMix: 0.5, // 走行音に足す白色ノイズのバンドパス（中心 Hz、Q、ブラウンに対する量）
+  release: 0.035,     // 最後尾が抜けてから消える（秒の時定数）
+  axles: [50, 100],   // 車端から車軸まで（層のドット。1両 480 の前後に2軸ずつ。台車の中心 75 ≒ 3.1m、軸距 50 ≒ 2.1m）
+  clickFreq: 1250, clickQ: 1.3, clickDecay: 0.045, // 継ぎ目の音（白色ノイズのバンドパス。自車の 850〜1050 より明るめで短い）
+  thump: [150, 70],   // 継ぎ目の音の低い「トン」（正弦波の始まり → 終わり Hz）
+  step: 0.015,        // 音量の曲線を何秒刻みで予約するか
+  ahead: 0.3          // 何秒先まで予約するか（driveAudio の間隔 0.1 秒より長く）
+};
+/* 対向列車の音の係数（純粋な関数）。s: 席の真横の所の先頭からの位置（層のドット）、len: 編成の長さ（層のドット）、v: 自車の速さ（ドット/秒）
+   { blast, run }: 0..1、tone: 風圧のローパス（Hz） */
+export function trainSound(s, len, v) {
+  const P = PASSING, w = v * TRAIN_F;
+  if (!(w > 1)) return { blast: 0, run: 0, tone: P.blastTone[1] };
+  const th = s / w, tt = (s - len) / w; // 先頭・最後尾が過ぎてからの秒数
+  if (th < -P.preMax || tt > 8 * P.release) return { blast: 0, run: 0, tone: P.blastTone[1] };
+  const out = tt > 0 ? Math.exp(-tt / P.release) : 1;
+  const run = (th < 0 ? Math.exp(th / P.pre) : 1) * out;
+  const blast = (th < 0 ? Math.exp(th / P.attack) : Math.exp(-th / P.blastDecay)) * out;
+  const tone = P.blastTone[1] + (P.blastTone[0] - P.blastTone[1]) * Math.exp(-Math.max(0, th) / P.blastDecay);
+  return { blast, run, tone };
+}
+/* 編成の車軸の位置（先頭からの層のドット、昇順）と強さ。1両に台車2つ × 2軸 */
+export function trainAxles(cars) {
+  const [p, q] = PASSING.axles, out = [];
+  for (let k = 0; k < cars; k++) {
+    const x = k * (TRAIN.car + TRAIN.gap);
+    out.push([x + p, 1], [x + q, 0.85], [x + TRAIN.car - q, 1], [x + TRAIN.car - p, 0.85]);
+  }
+  return out;
+}
+
+/* インバーター（VVVF）の磁励音。近年の IGBT 車の「ウィーン」: 出だしは一定の高いキャリア音（非同期）が鳴り、
+   速度に比例して上がる音（インバーターの出力周波数の倍音）が重なって、キャリア音は途中で消える。式は vvvfSound()
+   発車の加速中（acc）と、減速中の回生ブレーキ（regen 倍に控えめ）に鳴らし、巡航では消える */
+export const VVVF = {
+  carrier: 1050,          // 低速のキャリア音（Hz。一定）
+  carrierGain: 0.7,
+  carrierFade: [18, 42],  // キャリア音が消えていく速度の範囲（km/h）
+  side: 2, sideGain: 0.35,// キャリアの両側の音（carrier ± side × 出力周波数）。低速でうなりを作る
+  hzPerKmh: 1.45,         // インバーターの出力周波数（Hz / (km/h)。4極・歯車比 6.5・車輪 0.82m の目安）
+  harmonics: [[6, 1], [9, 0.5], [15, 0.25]], // 速度とともに上がる音 [出力周波数に対する倍率, 音量比]
+  rampIn: 4,              // 上がる音が 0 km/h からこの速度（km/h）までに立ち上がる
+  topFade: [60, 100], topLevel: 0.45, // 高速では上がる音を topLevel まで弱める（km/h の範囲）
+  grit: 0.25,             // キャリア音のざらつき（白色ノイズのバンドパス、Q gritQ）
+  gritQ: 6,
+  tone: 2200,             // 全体のローパス（Hz。耳障りにならないよう高域を丸める）
+  regen: 0.45,            // 回生ブレーキ中の音量（加速を 1 として）
+  regenFade: [6, 14]      // 回生が切れていく速度の範囲（km/h。これより遅いと空気ブレーキに替わって消える）
+};
+/* VVVF の音の係数（純粋な関数）。v: 速度（ドット/秒）、pw: 強さ 0..1（加速 or 回生×regen を呼ぶ側で混ぜる）
+   level: 全体の音量 0..1、carrier / side / harm: [周波数, 音量比]、grit: ざらつきの音量比 */
+export function vvvfSound(v, pw) {
+  const V = VVVF, kmh = Math.max(0, v) * 0.36, f = V.hzPerKmh * kmh;
+  const cw = 1 - ramp(kmh, V.carrierFade);
+  const hw = Math.min(1, kmh / V.rampIn) * (1 - (1 - V.topLevel) * ramp(kmh, V.topFade));
+  return {
+    level: Math.max(0, Math.min(1, pw)),
+    carrier: [V.carrier, V.carrierGain * cw],
+    side: [[V.carrier - V.side * f, V.sideGain * cw], [V.carrier + V.side * f, V.sideGain * cw]],
+    harm: V.harmonics.map(([m, a]) => [Math.max(20, m * f), a * hw]),
+    grit: V.grit * cw
+  };
+}
+const ramp = (x, [a, b]) => Math.min(1, Math.max(0, (x - a) / (b - a))); // a 以下で 0、b 以上で 1
 const V_CRUISE = 240;
 
 export let ac = null, master = null, white = null, rumbleF = null, motor = null, soundOn = false, volume = 0.6;
 let xingG = null, xingEnv = null, xingOsc = [], xingNext = 0;
+let trBlastG = null, trBlastF = null, trRunG = null, trOn = false, trCur = null; // 対向列車（trCur: { n, axles, i, s } 車軸の予約の続き）
+let vvG = null, vvOsc = [], vvGrit = null; // VVVF（vvOsc: キャリア・その両側2本・上がる音の { o, g }）
 let rainG = null, rainF = null, roofG = null, rumbleG = null, windG = null, motorG = null, motorF = null, brakeG = null, brakeF = null, tunG = null, bridgeG = null, echoIn = null;
 export function setSoundOn(v) { soundOn = v; }
 export function setVolume(v) { volume = v; }
@@ -158,6 +241,25 @@ export function initAudio() {
     const g = ac.createGain(); g.gain.value = a * (type === 'square' ? 0.5 : 1);
     o.connect(g); g.connect(xingEnv); o.start(); return { o, m };
   });
+  // 対向列車: 風圧（ブラウンノイズ → 動くローパス → trBlastG）と走行音（ブラウン → ローパス ＋ 白色 → バンドパス → trRunG）。音量は driveTrain で動かす
+  const bb = loopNoise(brown);
+  trBlastF = ac.createBiquadFilter(); trBlastF.type = 'lowpass'; trBlastF.frequency.value = PASSING.blastTone[1]; trBlastF.Q.value = 0.8;
+  trBlastG = ac.createGain(); trBlastG.gain.value = 0;
+  bb.connect(trBlastF); trBlastF.connect(trBlastG); trBlastG.connect(master); bb.start(0, 0.7);
+  const rb = loopNoise(brown), rl = ac.createBiquadFilter(); rl.type = 'lowpass'; rl.frequency.value = PASSING.runLow;
+  const rw = loopNoise(white), rh = ac.createBiquadFilter(); rh.type = 'bandpass'; rh.frequency.value = PASSING.hiss; rh.Q.value = PASSING.hissQ;
+  const rhg = ac.createGain(); rhg.gain.value = PASSING.hissMix;
+  trRunG = ac.createGain(); trRunG.gain.value = 0;
+  rb.connect(rl); rl.connect(trRunG); rw.connect(rh); rh.connect(rhg); rhg.connect(trRunG); trRunG.connect(master); rb.start(0, 1.3); rw.start(0, 0.4);
+  // VVVF: 正弦波（キャリア・その両側・上がる音）＋ キャリアのざらつき → ローパス → vvG。音量・音程は driveAudio で動かす
+  const vf = ac.createBiquadFilter(); vf.type = 'lowpass'; vf.frequency.value = VVVF.tone; vf.Q.value = 0.5;
+  vvG = ac.createGain(); vvG.gain.value = 0; vf.connect(vvG); vvG.connect(master);
+  vvOsc = Array.from({ length: 3 + VVVF.harmonics.length }, () => {
+    const o = ac.createOscillator(); o.type = 'sine'; o.frequency.value = VVVF.carrier;
+    const g = ac.createGain(); g.gain.value = 0; o.connect(g); g.connect(vf); o.start(); return { o, g };
+  });
+  const vn = loopNoise(white), vb = ac.createBiquadFilter(); vb.type = 'bandpass'; vb.frequency.value = VVVF.carrier; vb.Q.value = VVVF.gritQ;
+  vvGrit = ac.createGain(); vvGrit.gain.value = 0; vn.connect(vb); vb.connect(vvGrit); vvGrit.connect(vf); vn.start(0, 0.9);
   driveAudio(true);
 }
 const running = () => soundOn && ac && ac.state === 'running' && state.rate === 1; // 早送り中は鳴らさない
@@ -189,7 +291,16 @@ export function driveAudio(now = false) {
     const x = state.phase === 'brake' && v > 1.5 ? Math.max(0, 1 - v / 60) : 0;
     brakeG.gain.setTargetAtTime(VOL.brake * x * x * Math.min(1, v / 6), T, tc);
     brakeF.frequency.setTargetAtTime(2300 + 900 * x, T, tc);
+    // VVVF: 発車の加速中と、減速中の回生ブレーキ（減速度 7 = journey.js の A_BRAKE を 1 として。低速で切れる）
+    if (vvG) {
+      const regen = state.phase === 'brake' ? Math.min(1, Math.max(0, -state.accel / 7)) * ramp(v * 0.36, VVVF.regenFade) : 0;
+      const vs = vvvfSound(v, Math.max(acc, VVVF.regen * regen));
+      vvG.gain.setTargetAtTime(VOL.vvvf * vs.level, T, tc);
+      [vs.carrier, ...vs.side, ...vs.harm].forEach(([f, g], i) => { vvOsc[i].o.frequency.setTargetAtTime(f, T, tc); vvOsc[i].g.gain.setTargetAtTime(g, T, tc); });
+      vvGrit.gain.setTargetAtTime(vs.grit, T, tc);
+    }
     driveCrossing(v, tu, T, tc);
+    driveTrain(v, tu, T);
   } catch (e) { console.warn('driveAudio', e); }
 }
 
@@ -209,6 +320,54 @@ function driveCrossing(v, tu, T, tc) {
     const t = xingNext, e = xingEnv.gain;
     e.setValueAtTime(0, t); e.linearRampToValueAtTime(1, t + 0.003); e.setTargetAtTime(0, t + 0.003, tau);
   }
+}
+
+/* 対向列車の通過音: 席の位置の trainAt から、風圧・走行音の音量の曲線を step 秒刻みで ahead 秒先まで予約し直し（0.1 秒ごとの呼び出しの
+   setTargetAtTime では先頭の立ち上がりと最後尾の消え方が鈍るので、その時の速さで先の s を見込む）、車軸が席の真横を過ぎる時刻に継ぎ目の音を予約する。
+   早送り中・音が止まっている間・トンネルの中では鳴らさない（trains.js はトンネルの前後 700 に置かないので、ふつうは当たらない） */
+function driveTrain(v, tu, T) {
+  if (!trBlastG) return;
+  const pt = running() && tu < 1 && v > 1 ? trainAt(state.dist + W / 2) : null;
+  if (!pt) {
+    if (trOn) { for (const g of [trBlastG.gain, trRunG.gain]) { g.cancelScheduledValues(T); g.setTargetAtTime(0, T, 0.03); } trOn = false; }
+    trCur = null; return;
+  }
+  trOn = true;
+  const { s, train: t } = pt, w = v * TRAIN_F, vk = Math.pow(Math.min(1.1, v / V_CRUISE), 1.3) * (1 - tu), P = PASSING;
+  const bg = trBlastG.gain, rg = trRunG.gain, bf = trBlastF.frequency;
+  for (const p of [bg, rg, bf]) p.cancelScheduledValues(T);
+  for (let k = 0; k * P.step <= P.ahead + 1e-9; k++) {
+    const at = T + k * P.step, q = trainSound(s + w * k * P.step, t.len, v), set = k ? 'linearRampToValueAtTime' : 'setValueAtTime';
+    bg[set](VOL.trainBlast * q.blast * vk, at); rg[set](VOL.trainRun * q.run * vk, at); bf[set](q.tone, at);
+  }
+  // 車軸: 同じ件で s が戻っていなければ続きから、そうでなければ（別の件・jumpTo の後）今の位置より先の車軸から
+  if (!trCur || trCur.n !== t.n || s < trCur.s - 1) {
+    const axles = trainAxles(t.cars); let i = 0;
+    while (i < axles.length && axles[i][0] < s) i++;
+    trCur = { n: t.n, axles, i, s };
+  }
+  trCur.s = s;
+  const ks = (0.25 + 0.75 * Math.min(1, v / 200)) * (1 - tu);
+  for (; trCur.i < trCur.axles.length; trCur.i++) {
+    const [x, k] = trCur.axles[trCur.i], dt = (x - s) / w;
+    if (dt > P.ahead) break;
+    trainClick(T + 0.02 + Math.max(0, dt), k * ks, (trCur.i * 0.618) % 1);
+  }
+}
+/* 対向列車の継ぎ目の音（1軸ぶん）。自車の click() より明るく短い。j（0..1。車軸の番号から決める）で音程を少しずらす */
+function trainClick(when, strength, j) {
+  const P = PASSING; strength *= VOL.trainClick;
+  const src = ac.createBufferSource(); src.buffer = white;
+  const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = P.clickFreq * (0.92 + 0.16 * j); bp.Q.value = P.clickQ;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.5 * strength, when); g.gain.exponentialRampToValueAtTime(0.001, when + P.clickDecay);
+  src.connect(bp); bp.connect(g); g.connect(master);
+  src.start(when, Math.random() * 1.5, P.clickDecay + 0.02);
+  const o = ac.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(P.thump[0], when); o.frequency.exponentialRampToValueAtTime(P.thump[1], when + 0.07);
+  const og = ac.createGain();
+  og.gain.setValueAtTime(0.3 * strength, when); og.gain.exponentialRampToValueAtTime(0.001, when + 0.09);
+  o.connect(og); og.connect(master); o.start(when); o.stop(when + 0.11);
 }
 
 /* 継ぎ目の音。mix は featureMix() の { tunnel, bridge }（省略可）: トンネルでは反響、橋では金属の響きを足す */

@@ -4,7 +4,7 @@
 
 ## 状態とモジュールの依存
 
-- **モジュールの依存方向**: `state.js`（何も import しない。画面寸法の定数と共有の可変状態 `state`）← `rng.js` ← `world.js` / `palette.js` （`clock.js` は `world.js` の隣、`lights.js` は `palette.js` の次、`tone.js` は `scenery/index.js` の次、`weather.js` は `layers.js` の後）← `stations.js`（駅データ）← `features.js`（トンネル・橋の位置）← `course.js`（線形: カーブ・高架・制限速度）← `crossings.js`（踏切の位置）← `closewalls.js`（至近の建物の位置）← `trains.js`（対向列車の位置）← `layers.js` ← `scenery/*` ← `scenery/index.js`（レイヤーの実体 `layers`）← `journey.js`（進行。`stations.js` と `audio.js` を使う。`audio.js` は `features.js` を使う）← `ui.js` ← `main.js`。循環 import を作らないこと。`ui.js` は `main.js` を import せず、`render` / `rebuild` は `initUI(render, rebuild)` で受け取る。
+- **モジュールの依存方向**: `state.js`（何も import しない。画面寸法の定数と共有の可変状態 `state`）← `rng.js` ← `world.js` / `palette.js` （`clock.js` は `world.js` の隣、`lights.js` は `palette.js` の次、`tone.js` は `scenery/index.js` の次、`weather.js` は `layers.js` の後）← `stations.js`（駅データ）← `features.js`（トンネル・橋の位置）← `course.js`（線形: カーブ・高架・制限速度）← `crossings.js`（踏切の位置）← `closewalls.js`（至近の建物の位置）← `trains.js`（対向列車の位置）← `layers.js` ← `scenery/*` ← `scenery/index.js`（レイヤーの実体 `layers`）← `journey.js`（進行。`stations.js` と `audio.js` を使う。`audio.js` は `features.js` / `crossings.js` / `trains.js` を使う）← `ui.js` ← `main.js`。循環 import を作らないこと。`ui.js` は `main.js` を import せず、`render` / `rebuild` は `initUI(render, rebuild)` で受け取る。
 - **共有状態の書き換え**: `seed`・`dist`・`t`・`speed` などは `state.xxx` として読み書きする。`STYLE`（`palette.js`）と音の状態（`audio.js`）は `export let` なので、外からは `setStyle()` / `setSoundOn()` / `setVolume()` 経由で変える。
 
 ## 決定的生成
@@ -22,6 +22,7 @@
 - **高架の線路際**（`scenery/viaduct.js`）: `drawTrackside` の末尾で `viaductTrack` が、elev > 0 の列だけ消して描き直す（チャンクの `r` は使わず、高架の番号のハッシュから作った計画で防音壁・道路をまたぐ鋼桁・架線柱を散らす）。elev 0〜0.3 は盛土、0.3〜0.7 は擁壁、0.7 以上は高欄。
 - **カーブで前方の車両は見せない**（ユーザーの方針、2026-11-14）: 窓の端に自分の列車を描く演出は試したが、絵として違和感が大きいので削除した。カーブ感（遠景の速さの変化）と高架の変化は控えめだが、調整は保留（後で行う想定）。
 - **巡航速度**（`journey.js`）: `cruiseAt(d, end)` が `speedLimit` を先読みして位置だけから目標速度を決め、'run' の間は加速度の上限つき（+4.8 / −4 ドット/秒²）で追う。駅間ごとの最高はおよそ 77〜113 km/h、きついカーブで 47〜60 km/h。あり得る最高速度は `V_MAX`（`course.js`）。
+- **モーター音とインバーター音**（`audio.js`）: モーター音は鋸波1本＋ローパスで、速度に比例した音程（`VOL.motor` / `motorAccel`）。インバーター音（VVVF）は正弦波の束＋ざらつきのノイズをローパス `VVVF.tone` に通したもので、純粋な関数 `vvvfSound(v, pw)` が音程と音量比を決める: 低速は一定のキャリア音（1050Hz とその両側 ±2f）、出力周波数 f = 1.45 Hz/(km/h) の 6・9・15 倍の「ウィーン」が速度とともに上がり、キャリア音は 18〜42 km/h で消える。強さ `pw` は発車の加速中（`acc`）と、減速中の回生（減速度 / 7 × `VVVF.regen`、6〜14 km/h で切れる）。巡航中（'run'）の上げ下げでは鳴らさない。音量は `VOL.vvvf`。
 
 ## バイオームと景色の組み立て
 
@@ -58,6 +59,7 @@
 - **位置**（`trains.js`）: `FRAME`（5000）の枠ごとに `rng(hash32(seed, 9401, k))` を必ず4回引く（置くか・位置・両数・`h`）。出現率は重みで混ぜる（都心 0.8 / 住宅街 0.75 / 郊外 0.5 / 田園 0.25 / 山間・海沿い 0.06）。両数は `CARS`（2〜6）から等確率に選ぶ（ユーザーの方針、2026-11-16: 編成の長さはランダム、最大 6 両。通過は約 2〜6 秒）。見込んだ速さ（`speedLimit` から `cruiseAt` を近似）は駅の余白と `V_MIN` の判定に使う。窓に見えている範囲が駅の `[pos − (v²/14 + 1000), pos + (v²/16 + 14v)]` に入る件、見込んだ速さが `V_MIN`（165）未満の件、橋・トンネル ±700、踏切 ±400、前の件から 2500 以内、出発直後（3000）は置かない。高架・カーブ・至近の建物は除外しない。1件は `{ n, a, b, c, cars, len, v, h }`（`a` は先頭、`b` は最後尾が窓の中央に来る地点）。引くのは `trainsIn` / `trainNear` / `nextTrain` / `trainNo`。
 - **絵**（`scenery/train.js`、`train` 層 id 11、pan 0 / drop 0、`air` は `AIR.front`）: 自車の映り込みと同じ形式（`SELF` の色を共有）の通勤電車を、2m ほど先を通る近さで描く（ユーザーと3案を見比べて決めた、2026-11-16）。屋根・架線・架線柱は窓の上の外か車体の陰で見えず、y 0〜13 が雨どいと幕板、客室の窓 14〜51 が自分の窓の中ほどを横切り、帯 54〜60、裾は窓の下端より下。1両 480 ＋ すき間 12（連結部のほろの両側から奥の景色が細く見える）、扉4枚で扉の間隔 120。1フレームの移動（最大約 16 ドット）の1倍・2倍の帯を避けて、縦のくり返しの間隔はすべて 34 以上（両開きの扉の窓は1枚のガラスに見せる）。先頭は左端（前面ガラス・前照灯・行先表示）、最後尾は右端（尾灯）。夜は編成の全車両の室内灯が灯る（車両ごとに点いたり消えたりしない。`RE`）。
 - **描画**: `render()` が `trainClose` のときだけ、架線と架線柱の後・手前の雨脚（`fall(2)`）の前に描く。
+- **通過音**（`audio.js`）: `driveTrain()`（`driveAudio` の最後）が席の位置で `trainAt(d)`（`s = (d − a) × TRAIN_F`: 席の真横の所の先頭からの層のドット。0〜`len` がすれ違い中）を引き、純粋な関数 `trainSound(s, len, v)` で風圧（先頭の直前に約 0.02 秒で立ち上がり 0.32 秒で引くブラウンノイズ、ローパスも 1500 → 380Hz）と相手の走行音（先頭の 0.06 秒前から、最後尾が抜けると 0.035 秒で消える）の音量を決める。0.1 秒ごとの呼び出しでは立ち上がりが鈍るので、その時の速さで先の `s` を見込み、0.015 秒刻みの曲線を 0.3 秒先まで予約し直す。継ぎ目の「タタン」は `trainAxles(cars)`（1両の前後に2軸ずつ。台車は絵に無いので実物の比率で、車端から 50・100）の各軸が席の真横を過ぎる時刻に `trainClick` を予約する（同じ件の続きから。件が替わるか `s` が戻れば今の位置から）。早送り中・トンネルの中では鳴らさない。定数は `VOL.trainBlast` / `trainRun` / `trainClick` と `PASSING`。
 - **確認**: `shots` の `trains`（一覧と検証。実ループで走らせた通過秒数）/ `train[:k,k]`（5コマ）/ `trainrun[:k,sx,n]`（連続フレーム）mode、`?debug` の「次の対向列車へ」。
 
 ## 絵柄と描画の重ね順
