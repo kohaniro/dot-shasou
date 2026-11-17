@@ -1,7 +1,7 @@
 // 指定シード・絵柄で、各バイオームの中心と遷移の途中の景色を PNG に保存する（ヘッドレス Chrome を CDP で操作。依存なし）
 // 使い方: node shots.mjs <outDir> <seed,seed> <style,style> [mode]
 //   mode: both（既定） | raw | view | run | perf | pano:<距離,距離> | at:<距離,距離> | zoom:<距離,距離> | station[:<k,k>] | door[:<k,k>] | journey[:<秒>] | pass | walk | swap[:<k,k>] | feat | tunnel[:<k,k>] | bridge[:<k,k>] | xing | crossing[:<k,k>] | wall | closewall[:<k,k>] | trains | train[:<k,k>] | trainrun[:<k,sx,n>]
-//         | course | curve[:<k,k>] | elev[:<k,k>] | clock | tod[:<距離,距離>] | wx[:<距離,距離>] | tonerun[:<秒>]
+//         | course | elev[:<k,k>] | clock | tod[:<距離,距離>] | wx[:<距離,距離>] | tonerun[:<秒>]
 //         | gif:<開始距離>（README 用の GIF。SHOTS_GIF_SECS 既定8 / SHOTS_GIF_FPS 既定20 / SHOTS_GIF_SCALE 既定1）
 //   時間帯・天気は、既定では昼・晴に固定して撮る。環境変数 SHOTS_TOD=auto|dawn|noon|dusk|night|<時刻> と SHOTS_WX=auto|clear|cloud|rain|snow で変える（auto = 走行距離から決まる値。cloud:0.5 のように強さも付けられる）
 //   SHOTS_WXS=clear,cloud:0.5,cloud,rain:0.5,rain のように並べると、wx mode がその段階を順に撮る
@@ -143,9 +143,9 @@ const stub = (ls) => `(() => {
     }
     return { f, views, raws, info };
   };
-  // 踏切（crossings.js）の一覧と検証（d = 0〜dMax）: 間隔、駅・橋・トンネル・高架・カーブとの重なり、バイオーム別の件数
+  // 踏切（crossings.js）の一覧と検証（d = 0〜dMax）: 間隔、駅・橋・トンネル・高架との重なり、バイオーム別の件数
   window.__xing = async (dMax) => {
-    const { w, sn, ft, co, xg } = await window.__mods(); const xs = xg.crossingsIn(0, dMax), rows = [], bio = {}, bad = { station: 0, feature: 0, elev: 0, curve: 0, start: 0 };
+    const { w, sn, ft, co, xg } = await window.__mods(); const xs = xg.crossingsIn(0, dMax), rows = [], bio = {}, bad = { station: 0, feature: 0, elev: 0, start: 0 };
     const gaps = [];
     xs.forEach((x, i) => {
       const e = w.world(x.c), top = w.BIOME_KEYS.reduce((a, k) => e[k] > e[a] ? k : a, 'city');
@@ -153,8 +153,8 @@ const stub = (ls) => `(() => {
       if (i > 0) gaps.push(x.c - xs[i - 1].c);
       if (sn.stationsIn(x.a, x.b).length) bad.station++;
       if (ft.featureNear(x.c, x.w / 2)) bad.feature++;
-      let el = false, cu = false; for (let d = x.a - 700; d <= x.b + 700; d += 5) { if (co.elev(d) > 0) el = true; if (d >= x.a && d <= x.b && co.curve(d) !== 0) cu = true; } // 高架は前後 700（中景が窓の端で映す範囲）まで見る
-      if (el) bad.elev++; if (cu) bad.curve++; if (x.a < 2000) bad.start++;
+      let el = false; for (let d = x.a - 700; d <= x.b + 700; d += 5) if (co.elev(d) > 0) el = true; // 高架は前後 700（中景が窓の端で映す範囲）まで見る
+      if (el) bad.elev++; if (x.a < 2000) bad.start++;
       const s = sn.nextStation(x.c - 160), sp = sn.prevStation(x.c - 160);
       const sd = Math.min(...[s, sp].filter(Boolean).map(q => Math.max(0, q.x0 - x.b, x.a - q.x1)));
       const f = ft.featureNear(x.c, 1e5), fd = f ? Math.max(0, f.a - x.b, x.a - f.b) : '-';
@@ -163,7 +163,7 @@ const stub = (ls) => `(() => {
     const nSt = sn.nextStation(dMax).k - 1;
     const mean = gaps.length ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) : '-', min = gaps.length ? Math.min(...gaps) : '-', max = gaps.length ? Math.max(...gaps) : '-';
     return { rows, sum: 'count ' + xs.length + '  stations ' + nSt + '（駅間あたり ' + (xs.length / Math.max(1, nSt)).toFixed(2) + '）  gap mean ' + mean + ' min ' + min + ' max ' + max + '（250 ドット/秒で平均 ' + (typeof mean === 'number' ? (mean / 250).toFixed(0) : '-') + ' 秒）  biome ' + JSON.stringify(bio),
-      bad: 'overlaps: station ' + bad.station + ' feature ' + bad.feature + ' elev ' + bad.elev + ' curve ' + bad.curve + ' start ' + bad.start };
+      bad: 'overlaps: station ' + bad.station + ' feature ' + bad.feature + ' elev ' + bad.elev + ' start ' + bad.start };
   };
   // 踏切（k 番目）の5コマ: 道の中心 c が窓の右寄り（画面 x=250）/ 至近の層が窓に入った所 / 窓の中央 / 至近の層が出ていく所 / 通過後（窓の左端より 200 手前、x=-200 相当）
   window.__crossing = async (k) => {
@@ -231,7 +231,7 @@ const stub = (ls) => `(() => {
     const ts = tr.trainsIn(0, dMax), rows = [], bio = {}, cars = {}, gaps = [], secs = [], bad = { phase: 0, station: 0, bridge: 0, tunnel: 0, crossing: 0, order: 0 };
     let elevN = 0, wallN = 0, vmin = Infinity, vmax = 0, worst = null, best = null;
     const keep = { dist: S.dist }, F = tr.TRAIN_F, dt = 1 / 60, run = new Map();
-    // d = 0 から dMax の先まで1本の走行で（減速・停車・発車・カーブの前後の速さの履歴ごと）。各件の先頭（X0）・最後尾（X1）の画面 x = X − dist × F
+    // d = 0 から dMax の先まで1本の走行で（減速・停車・発車の前後の速さの履歴ごと）。各件の先頭（X0）・最後尾（X1）の画面 x = X − dist × F
     {
       j.jumpTo(0); let idx = 0, prevD = S.dist, t = 0;
       const lastX = ts.length ? Math.round((ts[ts.length - 1].a - 160) * F + 160) + ts[ts.length - 1].len : 0;
@@ -310,27 +310,22 @@ const stub = (ls) => `(() => {
     for (let i = 0; i < n; i++) { if (i) window.__step(1, 1000 / 60); views.push(crop()); info.push('f' + i + ' dist=' + S.dist.toFixed(1) + ' head x=' + (X0 - S.dist * F).toFixed(1)); }
     return { x, views, info };
   };
-  // 線形（course.js）の一覧と検証（d = 0〜dMax）: カーブ、向きの範囲、傾きの最大、高架、制限速度、実際に走らせた駅間ごとの最高速度
+  // 線形（course.js）の一覧と検証（d = 0〜dMax）: 高架、制限速度、実際に走らせた駅間ごとの最高速度
   window.__course = async (dMax) => {
     const { st, sn, ft, co, j, w } = await window.__mods(); const S = st.state, rows = [], bad = [];
-    const cs = [], es = [];
-    for (let c = co.nextCurve(0); c && c.a <= dMax; c = co.nextCurve(c.a + 1)) cs.push(c);
+    const es = [];
     for (let e = co.nextElev(0); e && e.a <= dMax; e = co.nextElev(e.a + 1)) es.push(e);
-    let hMin = 0, hMax = 0, sMax = 0, cMax = 0, up = 0, top = 0, ph = 0;
+    let up = 0, top = 0;
     for (let d = 0; d <= dMax; d += 10) {
-      const h = co.heading(d), el = co.elev(d), c = co.curve(d);
-      hMin = Math.min(hMin, h); hMax = Math.max(hMax, h); sMax = Math.max(sMax, Math.abs(h - ph) / 10); cMax = Math.max(cMax, Math.abs(c)); ph = h;
+      const el = co.elev(d);
       if (el > 0) up++; if (el >= 1) top++;
       if (d % 50) continue;
       const e = w.world(d), f = ft.featureNear(d, 0), s = sn.stationNear(d, 0);
       if (el > 0 && (e.mount > 0 || e.sea > 0)) bad.push('elev in mount/sea @' + d);
       if (el > 0 && ft.featureNear(d, 499)) bad.push('elev near feature @' + d);
       if (el > 0 && el < 1 && sn.stationNear(d, 299)) bad.push('ramp at platform @' + d);
-      if (c !== 0 && sn.stationNear(d, 299)) bad.push('curve at platform @' + d);
-      if (c !== 0) { const n = ft.featureNear(d, 299); if (n && (n.type === 'bridge' ? d >= n.a - 199 && d <= n.b + 199 : Math.abs(d - n.a) < 300 || Math.abs(d - n.b) < 300)) bad.push('curve near ' + n.type + ' @' + d); }
-      if (d < 3000 && (c !== 0 || el > 0)) bad.push('not straight at start @' + d);
+      if (d < 3000 && el > 0) bad.push('elevated at start @' + d);
     }
-    cs.forEach((c, i) => rows.push(['curve', '#' + c.n, 'a=' + c.a, 'len=' + c.len, 'h ' + c.h0.toFixed(1) + '→' + c.h1.toFixed(1), 'peak ' + (1.5 * (c.h1 - c.h0) / c.len / co.SLOPE_MAX).toFixed(2), i ? 'gap ' + (c.a - cs[i - 1].b) : ''].join('  ')));
     es.forEach(e => { const m = w.world((e.a + e.b) / 2), k1 = sn.nextStation(e.a - 160).k, inn = []; for (let k = k1; sn.stationAt(k).x0 < e.b; k++) inn.push('k' + k + (co.elev(sn.stationAt(k).pos + 160) >= 1 ? '(高架)' : '(勾配)')); rows.push(['elev', '#' + e.n, 'a=' + e.a, 'b=' + e.b, 'len=' + (e.b - e.a), 'up=' + e.up, 'down=' + e.down, 'city+resi@mid ' + (m.city + m.resi).toFixed(2), 'stations ' + (inn.join(',') || '-')].join('  ')); });
     // 実際に走らせる（描画なし・50ms 刻み）: 駅間ごとの最高速度、巡航中の加減速の最大、制限の超過
     j.jumpTo(0); const legs = []; let leg = { k: S.station.k, vmax: 0, lim: [1e9, 0] }, acc = 0, dec = 0, over = 0, tsec = 0;
@@ -343,20 +338,19 @@ const stub = (ls) => `(() => {
     const kmh = v => Math.round(v * 0.36);
     const kinds = [...new Set(bad.map(b => b.split('@')[0]))];
     return { rows, bad: kinds.map(b => b + '×' + bad.filter(x => x.startsWith(b)).length),
-      sum: 'curves ' + cs.length + '  heading ' + hMin.toFixed(1) + '〜' + hMax.toFixed(1) + '  max|slope| ' + sMax.toFixed(4) + '  max|curve| ' + cMax.toFixed(2) + '  elev spans ' + es.length + '  elev>0 ' + (100 * up * 10 / dMax).toFixed(1) + '%  elev=1 ' + (100 * top * 10 / dMax).toFixed(1) + '%',
+      sum: 'elev spans ' + es.length + '  elev>0 ' + (100 * up * 10 / dMax).toFixed(1) + '%  elev=1 ' + (100 * top * 10 / dMax).toFixed(1) + '%',
       run: 'sim ' + Math.round(tsec) + 's  run accel max +' + acc.toFixed(2) + ' / ' + dec.toFixed(2) + '  max over limit ' + over.toFixed(2) + '  legs vmax km/h: ' + legs.map(l => 'k' + l.k + ' ' + kmh(l.vmax) + '(制限 ' + kmh(l.lim[0]) + '〜' + kmh(l.lim[1]) + ')').join(' ') };
   };
-  // カーブ・高架（k 番目）のコマ: カーブは 始点 / 1/4 / 中ほど（最もきつい）/ 終点 が窓の中央、高架は 勾配の始点 / 勾配の中ほど / 上りきった所 / 高架の中ほど / 下り勾配の中ほど
+  // 高架（k 番目）のコマ: 勾配の始点 / 勾配の中ほど / 上りきった所 / 高架の中ほど / 下り勾配の中ほど
   window.__courseShot = async (type, k) => {
     const { st, co } = await window.__mods(); const S = st.state, views = [], raws = [], info = [];
-    const next = type === 'curve' ? co.nextCurve : co.nextElev; let c = next(0);
-    for (let n = 1; c && n < k; n++) c = next(c.a + 1);
+    let c = co.nextElev(0);
+    for (let n = 1; c && n < k; n++) c = co.nextElev(c.a + 1);
     if (!c) return null;
-    const pts = type === 'curve' ? [['start', c.a], ['quarter', c.a + c.len / 4], ['middle', c.a + c.len / 2], ['end', c.b]]
-      : [['ramp-start', c.a], ['ramp-mid', c.a + c.up / 2], ['top', c.a + c.up], ['middle', (c.a + c.b) / 2], ['down-mid', c.b - c.down / 2]];
+    const pts = [['ramp-start', c.a], ['ramp-mid', c.a + c.up / 2], ['top', c.a + c.up], ['middle', (c.a + c.b) / 2], ['down-mid', c.b - c.down / 2]];
     for (const [tag, d] of pts) {
       await window.__goto(Math.round(d) - 160); views.push(window.__view()); raws.push(await window.__raw(S.dist, 480, 2));
-      info.push(tag + ' dist=' + S.dist.toFixed(1) + ' phase=' + S.phase + ' speed=' + S.speed.toFixed(1) + ' heading=' + co.heading(S.dist + 160).toFixed(1) + ' curve=' + S.curve.toFixed(2) + ' elev=' + S.elev.toFixed(2) + ' lean=' + S.lean.toFixed(2));
+      info.push(tag + ' dist=' + S.dist.toFixed(1) + ' phase=' + S.phase + ' speed=' + S.speed.toFixed(1) + ' elev=' + S.elev.toFixed(2));
     }
     return { c, views, raws, info };
   };
@@ -666,7 +660,7 @@ for (const seed of seedArg.split(',')) for (const style of styleArg.split(',')) 
       const r = await pg.ev('__course(200000)');
       if (pass === 0) console.log(['', ...r.rows, r.sum, r.run, 'violations: ' + (r.bad.length ? r.bad.join(' / ') : 'none')].join('\n  ').slice(1));
       h.push(crypto.createHash('sha256').update(r.rows.join(';') + r.run).digest('hex').slice(0, 12));
-    } else if (/^(curve|elev)(:|$)/.test(mode)) { // カーブ・高架の k 番目ごとのコマ
+    } else if (/^elev(:|$)/.test(mode)) { // 高架の k 番目ごとのコマ
       const [type, arg] = mode.split(':'), ks = arg ? arg.split(',').map(Number) : [1, 2];
       for (const k of ks) {
         const r = await pg.ev(`__courseShot('${type}', ${k})`);

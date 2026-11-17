@@ -4,32 +4,16 @@ import { world } from './world.js';
 import { stationsIn, nextStation } from './stations.js';
 import { featuresIn } from './features.js';
 
-/* ---------- 線形（カーブ・高低差・制限速度。シードから決定的に決める。描画はしない） ----------
-   座標は駅・トンネル・橋と同じ線路際（視差 1.0）の走行距離 d。
-   カーブ: { n, a, b, len, h0, h1 }。向き heading(d) は a までは h0、b からは h1、あいだは smoothstep。
-     単位は「遠景レイヤーのドット」: layers.js が各レイヤーの位置に pan × heading(d) を足すので、
-     カーブの途中だけ遠くの景色の流れる速さが変わる（傾きが正 = 速く流れる = 窓がカーブの外側）。
+/* ---------- 線形（高低差・制限速度。シードから決定的に決める。描画はしない） ----------
+   座標は駅・トンネル・橋と同じ線路際（視差 1.0）の走行距離 d。線路はいつも直線。
    高架: { n, a, b, up, down }。elev(d) は a から up ドットかけて 0 → 1、b の手前 down ドットで 1 → 0。
-   どちらも d = 0 から前へ順に決めて表を伸ばす（前の区間の終わりから次を決めるので、後から変わることはない）。 */
-const SALT_CURVE = 93;  // hash32(seed, SALT_CURVE, 候補の通し番号)
-const SALT_ELEV = 94;   // hash32(seed, SALT_ELEV, 枠の番号)
+   d = 0 から前へ順に決めて表を伸ばす（前の区間の終わりから次を決めるので、後から変わることはない）。 */
+const SALT_ELEV = 94;   // hash32(seed, SALT_ELEV, 枠の番号)（93 は以前の版で使っていたので使わない）
 const SALT_SPEED = 95;  // hash32(seed, SALT_SPEED, 駅の番号 k): 駅 k−1 〜 駅 k の駅間の係数
-const START = 3000;     // これより手前（出発直後）は直線・地上
-const FAR = 3000000;    // nextCurve / nextElev が探すのを諦める距離
+const START = 3000;     // これより手前（出発直後）は地上
+const FAR = 3000000;    // nextElev が探すのを諦める距離
 const STEP = 250;       // world(d) を見る刻み
 
-export const HEADING_MAX = 120;  // |heading| の上限
-export const SLOPE_MAX = 0.065;  // heading の傾きの上限（遠景 f = 0.09 より小さく: 遠景が逆流しない）
-const CURVE = {
-  len: [1500, 4000],    // カーブの長さ
-  gap: [6000, 14000],   // 前のカーブの終わり（最初は START）から次の始まりまで
-  turn: [0.45, 1],      // 向きの変化量: その長さで傾きが SLOPE_MAX になる量に対する割合
-  turnMax: 110,         // 向きの変化量の上限（HEADING_MAX より小さく: どの向きからでも ±どちらかへは曲がれる）
-  station: 300,         // 駅のホーム [x0, x1] の前後、カーブを置かない幅
-  bridge: 200,          // 橋 [a, b] の前後
-  portal: 300,          // トンネルの坑口（a と b）の前後
-  tries: 8              // 置けないとき、じゃまな区間の先へずらして試す回数
-};
 const ELEV = {
   slot: 12000, p: 0.7,  // 枠ごとに確率 p で1つ
   len: [6000, 20000],   // 長さ（勾配を含む）。削られてこの下限を割ったら置かない
@@ -42,7 +26,6 @@ const ELEV = {
 /* 巡航の目標速度（ドット/秒。× 0.36 で km/h） */
 const SPEED = { city: 205, resi: 235, suburb: 265, rural: 300, mount: 300, sea: 300 };
 const SPEED_K = [0.9, 1.05];  // 駅間ごとの係数
-const CURVE_SLOW = 0.6;       // |curve| = 1 のときの倍率（|curve| で線形）
 export const V_MAX = Math.max(...Object.values(SPEED)) * SPEED_K[1]; // あり得る最高速度
 
 const clamp01 = v => Math.min(1, Math.max(0, v));
@@ -50,77 +33,10 @@ const sstep = t => { t = clamp01(t); return t * t * (3 - 2 * t); };
 const between = (r, [lo, hi]) => lo + (hi - lo) * r();
 
 /* ---------- 表（シードごとにキャッシュ） ---------- */
-let cacheSeed = null, curves = [], curveSeq = 0, curveFrom = START, spans = [], slotK = 0, ci = 0, ei = 0;
+let cacheSeed = null, spans = [], slotK = 0, ei = 0;
 function sync() {
   if (cacheSeed === state.seed) return;
-  cacheSeed = state.seed; curves = []; curveSeq = 0; curveFrom = START; spans = []; slotK = 0; ci = 0; ei = 0;
-}
-
-/* [a, b] にカーブを置けないなら、じゃまな区間の終わり（最も先のもの）。置けるなら -1 */
-function blockedUntil(a, b) {
-  let end = -1;
-  for (const s of stationsIn(a - CURVE.station, b + CURVE.station)) end = Math.max(end, s.x1 + CURVE.station);
-  for (const f of featuresIn(a - CURVE.portal, b + CURVE.portal)) {
-    if (f.type === 'bridge') { if (f.a - CURVE.bridge <= b && f.b + CURVE.bridge >= a) end = Math.max(end, f.b + CURVE.bridge); }
-    else for (const p of [f.a, f.b]) if (p - CURVE.portal <= b && p + CURVE.portal >= a) end = Math.max(end, p + CURVE.portal);
-  }
-  return end;
-}
-/* 次のカーブの候補を1つ決める（置けなければ表には足さず、探す起点だけ進める） */
-function genCurve() {
-  const r = rng(hash32(state.seed, SALT_CURVE, ++curveSeq));
-  const len = Math.round(between(r, CURVE.len)), q = between(r, CURVE.turn), left = r() < 0.5;
-  let a = Math.round(curveFrom + between(r, CURVE.gap)), ok = false;
-  for (let k = 0; k < CURVE.tries && !ok; k++) { const e = blockedUntil(a, a + len); if (e < 0) ok = true; else a = e + 1; }
-  curveFrom = a + len;
-  if (!ok) return;
-  const h0 = curves.length ? curves[curves.length - 1].h1 : 0;
-  const mag = Math.min(CURVE.turnMax, q * SLOPE_MAX * len / 1.5); // smoothstep の最大の傾きは 1.5 × 変化量 / 長さ
-  let h1 = h0 + (left ? -mag : mag);
-  if (Math.abs(h1) > HEADING_MAX) h1 = h0 - (left ? -mag : mag);  // はみ出すなら逆へ曲がる（有界に保つ）
-  h1 = Math.max(-HEADING_MAX, Math.min(HEADING_MAX, h1));
-  curves.push(Object.freeze({ n: curves.length + 1, a, b: a + len, len, h0, h1 }));
-}
-/* a <= d のカーブがすべて表に入るまで伸ばす */
-function ensureCurves(d) {
-  sync();
-  while (curveFrom + CURVE.gap[0] <= d) genCurve();
-}
-/* a <= d である最後のカーブ（無ければ null）。前回の添字の近くを先に見る */
-function curveAt(d) {
-  ensureCurves(d);
-  const n = curves.length;
-  if (!n || d < curves[0].a) return null;
-  if (ci >= n) ci = n - 1;
-  if (!(curves[ci].a <= d && (ci + 1 >= n || curves[ci + 1].a > d))) {
-    let lo = 0, hi = n - 1;
-    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (curves[m].a <= d) lo = m; else hi = m - 1; }
-    ci = lo;
-  }
-  return curves[ci];
-}
-
-/* 向きの積算（遠景レイヤーのドット）。|heading| <= HEADING_MAX */
-export function heading(d) {
-  const c = curveAt(d);
-  if (!c) return 0;
-  return d >= c.b ? c.h1 : c.h0 + (c.h1 - c.h0) * sstep((d - c.a) / c.len);
-}
-/* カーブのきつさ −1..1（heading の傾き ÷ SLOPE_MAX）。正 = 遠景が速く流れる（窓がカーブの外側）、負 = 窓が内側 */
-export function curve(d) {
-  const c = curveAt(d);
-  if (!c || d >= c.b) return 0;
-  const t = (d - c.a) / c.len;
-  return 6 * t * (1 - t) * (c.h1 - c.h0) / c.len / SLOPE_MAX;
-}
-/* a >= d で最も近いカーブ { n, a, b, len, h0, h1 }。FAR 先まで無ければ null */
-export function nextCurve(d) {
-  sync();
-  for (let i = 0; ; i++) {
-    while (i >= curves.length && curveFrom < d + FAR) genCurve();
-    if (i >= curves.length) return null;
-    if (curves[i].a >= d) return curves[i];
-  }
+  cacheSeed = state.seed; spans = []; slotK = 0; ei = 0;
 }
 
 /* ---------- 高架 ---------- */
@@ -185,10 +101,10 @@ export function nextElev(d) {
 }
 
 /* ---------- 制限速度 ---------- */
-/* その地点の巡航の目標速度（ドット/秒）: バイオームの基準 × 駅間ごとの係数 × カーブの制限 */
+/* その地点の巡航の目標速度（ドット/秒）: バイオームの基準 × 駅間ごとの係数 */
 export function speedLimit(d) {
   const e = world(d);
   let v = 0; for (const b in SPEED) v += e[b] * SPEED[b];
   const k = SPEED_K[0] + (SPEED_K[1] - SPEED_K[0]) * hash32(state.seed, SALT_SPEED, nextStation(d).k) / 4294967296;
-  return v * k * (1 - (1 - CURVE_SLOW) * Math.abs(curve(d)));
+  return v * k;
 }

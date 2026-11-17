@@ -11,10 +11,9 @@ import { drawDoorBackdrop } from './scenery/station.js';
 import { stationNear } from './stations.js';
 import { interior, drawInterior, drawStraps, drawDoors, doorShift, DOOR_W } from './interior.js';
 import { drawPassengers } from './passengers.js';
-import { drawSunlight } from './sunlight.js';
 import { ac, soundOn, click, driveAudio } from './audio.js';
 import { featureMix } from './features.js';
-import { curve, elev } from './course.js';
+import { elev } from './course.js';
 import { tones, viewOff } from './layers.js';
 import { syncTone, stepTone, resetTone } from './tone.js';
 import { drawFall, drawGlassRain } from './weather.js';
@@ -50,9 +49,7 @@ function scheduleHits() {
   }
 }
 
-/* カーブと高低差で、窓の外の絵を上下にずらす量（ドット。半ドット刻みに丸めて使う） */
-const CANT = 2;      // カーブ: curve = ±1 のとき、空以外の全部を一様に。正（窓がカーブの外側）で景色が下がる
-const LEAN = 5.5;    // つり革の傾き: state.lean = ±1 のとき、輪の位置で（カーブではっきり振れるよう 3 から上げた。直線では lean = 0 なので変わらない）
+/* 高低差で窓の外の絵を下げる量は半ドット刻みに丸めて使う */
 const half = v => Math.round(v * SUB) / SUB;
 
 /* ---------- frame ---------- */
@@ -84,10 +81,10 @@ function render() {
   let bob = 0;
   while (bobs.length && bobs[0] + 0.07 < t) bobs.shift();
   for (const b of bobs) if (t >= b && t < b + 0.07) { bob = 1 / SUB; break; }
-  // カーブと高低差は窓の中央の地点の値で決める。レイヤーごとの下げ幅は Layer の drop（高架のとき、遠くの地面ほど少し・近くほど大きく下がる）
-  const cv = curve(dist + W / 2), el = elev(dist + W / 2), cant = half(cv * CANT);
-  state.curve = cv; state.elev = el;
-  const oy = SY + bob + cant;
+  // 高低差は窓の中央の地点の値で決める。レイヤーごとの下げ幅は Layer の drop（高架のとき、遠くの地面ほど少し・近くほど大きく下がる）
+  const el = elev(dist + W / 2);
+  state.elev = el;
+  const oy = SY + bob;
   // 窓の外の景色はトーン（時間帯・天気の色調）つきで描く。切り替えのクロスフェード中は、いまのトーンの絵の上に次のトーンの絵を toneK の濃さで重ねる
   // （層ごとに重ねるので、不透明なドットはちょうど2つの色の中間になる）。scene(fn) の fn(b) は b = false で今の、true で次のトーンの絵を描く
   const fadeK = state.toneTo ? Math.min(1, state.toneK) : 0;
@@ -133,9 +130,8 @@ function render() {
   for (let k = Math.floor(wx / SPAN); k * SPAN < wx + W + 20; k++) {
     const sx = k * SPAN - wx;
     if (poleOnBridge(k * SPAN) || poleInTunnel(k * SPAN) || poleOnCrossing(k * SPAN)) continue; // 橋の上・トンネルの山の中・踏切の道の上には柱を立てない
-    const py = Math.floor(SY + Math.min(0, cant)), ph = SH + 2 + Math.ceil(Math.abs(cant)); // 柱は窓の上下の端まで届かせる
-    R(cx, sx, py, 4, ph, '#4b5350'); R(cx, sx, py, 1, ph, '#75807c');
-    R(cx, sx - 12, SY + 3 + cant, 30, 2, '#4b5350');
+    R(cx, sx, SY, 4, SH + 2, '#4b5350'); R(cx, sx, SY, 1, SH + 2, '#75807c'); // 柱は窓の上下の端まで届かせる
+    R(cx, sx - 12, SY + 3, 30, 2, '#4b5350');
   }
   });
   // 対向列車（隣の線路。線路際・架線柱より手前で、屋根より上は透明なので架線は屋根の上を通って見える）。対向列車の近くでだけ描く
@@ -170,9 +166,8 @@ function render() {
   if (dsh > 0) toned(() => { drawDoorBackdrop(cx, state.station, 0, dsh); drawDoorBackdrop(cx, state.station, W - dsh, dsh); });
   drawDoors(cx, dsh / DOOR_W);
   cx.drawImage(interior, 0, 0);
-  drawSunlight(cx); // 晴れた昼、背中側の窓から向かいの座席・腰板に落ちる日の光（カーブで向きが変わると横へ滑る。乗客はその手前）
   drawPassengers(cx, t);
-  drawStraps(cx, t, bob ? 0.5 : 0, state.lean * LEAN);
+  drawStraps(cx, t, bob ? 0.5 : 0);
 }
 function frame(now) {
   const dt = Math.min(0.05, (now - state.last) / 1000); state.last = now;

@@ -1,10 +1,10 @@
-import { W, RAIL, state } from './state.js';
+import { RAIL, state } from './state.js';
 import { nextStation, stationAt } from './stations.js';
 import { sfx } from './audio.js';
-import { speedLimit, curve } from './course.js';
+import { speedLimit } from './course.js';
 
 /* ---------- 進行（巡航 → 減速 → 停車・ドア開閉 → 発車） ----------
-   巡航の速度は時刻ではなく位置で決まる: course.js の speedLimit(d)（バイオーム・駅間・カーブ）を、前方を先読みして追う。
+   巡航の速度は時刻ではなく位置で決まる: course.js の speedLimit(d)（バイオーム・駅間）を、前方を先読みして追う。
    state.phase: 'run'（巡航）| 'brake'（駅へ減速中）| 'stop'（停車中）| 'depart'（発車して加速中）
    state.station: 向かっている駅（停車中はその駅。発車した瞬間に次の駅へ替わる）
    state.stopT: 停車してからの秒数（stop 以外では 0）
@@ -20,8 +20,6 @@ const RUN_ACCEL = 0.6 * A_ACCEL; // 巡航中、目標速度へ上げるとき�
 const RUN_DECEL = 4;         // 巡航中、目標速度へ下げるときの減速度の上限
 const PLAN_DECEL = 0.9 * RUN_DECEL; // 先読みで見込む減速度（上限より少しゆるく見込み、追い切れずに行き過ぎないように）
 const GRID = 50;             // 先読みで制限速度を見る刻み（ドット）
-const LEAN_T = 0.9;          // つり革の傾き state.lean が curve を追う時定数（秒）
-const LEAN_V = 150;          // これより遅いと傾きを速度に比例して小さくする
 
 /* 制限速度を GRID 刻みで覚えておく（先読みで毎フレーム 200 点ほど引くので） */
 let limSeed = null; const lims = new Map();
@@ -43,7 +41,6 @@ export function cruiseAt(d, end = Infinity) {
   }
   return best;
 }
-const leanGoal = () => curve(state.dist + W / 2) * Math.min(1, state.speed / LEAN_V);
 
 /* 停車中のできごと（停車してからの秒数） */
 export const T_OPEN = 1.0, T_DOOR = 2.0, T_SIGNAL = 2.2, T_AFTER = 1.5;
@@ -87,8 +84,7 @@ function toBrake(st, s) {
 /* 地点 d の状態に置き直す（路線の切り替え、撮影での瞬間移動）。stopT を渡すと、駅の pos ちょうどなら停車中のその時刻にする */
 export function seekJourney(d, stopT = 0) {
   seek(d, stopT);
-  state.toneSnap = true;   // 時間帯・天気のトーンは、飛んだ先のものへフェードせずに切り替える（tone.js）
-  state.lean = leanGoal(); // つり革の傾きは落ち着いた値にそろえる（同じ地点へ飛べば同じ状態）
+  state.toneSnap = true; // 時間帯・天気のトーンは、飛んだ先のものへフェードせずに切り替える（tone.js）
 }
 function seek(d, stopT) {
   state.stopT = 0; state.door = 0; state.accel = 0; tau = 0; departT = 0;
@@ -147,5 +143,4 @@ export function stepJourney(dt) {
     else { state.speed = v; state.dist += v * dt; }
   }
   state.accel = dt > 0 ? (state.speed - v0) / dt : 0;
-  state.lean += (leanGoal() - state.lean) * (1 - Math.exp(-dt / LEAN_T));
 }

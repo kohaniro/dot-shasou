@@ -1,6 +1,6 @@
 import { W } from './state.js';
 import { rng, ri, pick } from './rng.js';
-import { P, R, shade, tint, rgb, setTone } from './palette.js';
+import { P, R, shade, tint } from './palette.js';
 import { carStyle } from './carstyle.js';
 
 /* ---------- interior (pre-rendered, windows punched out) ---------- */
@@ -18,21 +18,8 @@ export function drawDoors(g, open) {
   g.drawImage(leaves[0], 0, 0, w, 180, sh, 0, w, 180);
   g.drawImage(leaves[1], 1 + sh, 0, w, 180, 287, 0, w, 180);
 }
-/* 日なたの車内: 同じ車内を「日が当たった色」で描いたもの（窓は同じく抜いてある）。sunlight.js が窓から差す光の形に切り抜いて、車内の上に重ねる。
-   色は SUN_LIT（トーンと同じ仕組みの色の変換。palette.js の setTone で R() / P() に掛ける）で明るく暖かくしてから絵柄の変換を通す */
-export const litInterior = document.createElement('canvas');
-litInterior.width = W; litInterior.height = 180;
-const litLeaves = DOORS.map(() => { const c = document.createElement('canvas'); c.width = 34; c.height = 180; return c; }); // 扉には光を落とさないので捨てる
-export const SUN_GLOW = { add: [0.3, 0.27, 0.2], lift: [9, 5, -3] }; // 日なたの色: 白へ寄せる割合（R, G, B）と、そのあと足す量
-const hx = v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
-const SUN_LIT = { key: 'sunlit', id: false, fn: c => { const v = rgb(c), { add, lift } = SUN_GLOW; return '#' + v.map((x, k) => hx(x + (255 - x) * add[k] + lift[k])).join(''); } };
-/* 車内（と日なたの車内）を描き直す。路線・絵柄が替わったとき */
 export function drawInterior() {
-  paintInterior(interior, leaves);
-  const prev = setTone(SUN_LIT); paintInterior(litInterior, litLeaves); setTone(prev);
-}
-function paintInterior(cv, leaves) {
-  const g = cv.getContext('2d'), r = rng(20261113);
+  const g = interior.getContext('2d'), r = rng(20261113);
   const S = (x, y, w, h, c) => R(g, x, y, w, h, c);   // 面
   const HL = (x, y, w, c) => R(g, x, y, w, 1, c);     // 1ドットの横線
   const VL = (x, y, h, c) => R(g, x, y, 1, h, c);     // 1ドットの縦線
@@ -41,7 +28,7 @@ function paintInterior(cv, leaves) {
   const car = carStyle();
   const wall = car.wall.c, wallSh = car.wall.sh || shade(wall, 0.18), wallTop = car.wall.top || tint(wall, 0.38);
   const fr = '#9aa0a3', frD = '#6c7275', frL = '#c7ccce';
-  g.clearRect(0, 0, cv.width, cv.height);
+  g.clearRect(0, 0, interior.width, interior.height);
   S(0, 0, 320, 180, wall);
   S(0, 0, 320, 6, wallTop); S(60, 2, 200, 2, '#fdfdf2'); S(0, 6, 320, 1, wallSh);
   // ad strip above the windows (架空の広告)
@@ -144,16 +131,16 @@ function sleeve(g, kind, frL, frD) {
   });
   return top;
 }
-/* つり革。輪は 8×8 ドット以内（線の太さ 1、握りの所は太く）、行ごとの [x, 幅, ...]。lean はカーブでの傾き（輪の位置でのドット数。正で右へ） */
+/* つり革。輪は 8×8 ドット以内（線の太さ 1、握りの所は太く）、行ごとの [x, 幅, ...] */
 const RING = [[2, 4], [1, 1, 6, 1], [0, 1, 7, 1], [0, 1, 7, 1], [0, 1, 7, 1], [0, 1, 7, 1], [1, 1, 6, 1], [2, 4]];
 const TRI = [[3, 2], [2, 1, 5, 1], [2, 1, 5, 1], [1, 1, 6, 1], [1, 1, 6, 1], [0, 1, 7, 1], [0, 8], [0, 8]];
 const SQR = [[1, 6], [0, 1, 7, 1], [0, 1, 7, 1], [0, 1, 7, 1], [0, 1, 7, 1], [0, 8], [0, 8], [1, 6]];
 const SHAPES = { 丸: RING, 三角: TRI, 角: SQR };
-export function drawStraps(g, t, jolt, lean = 0) {
+export function drawStraps(g, t, jolt) {
   const y0 = 8, y1 = 30, bw = 2, rw = 8, car = carStyle(), shape = SHAPES[car.strap];
   for (let k = 0; k < 8; k++) {
     const x = 62 + k * 28, belt = car.belt;
-    const off = Math.round(lean + Math.sin(t * 1.9 + k * 0.5) * 1.1 + jolt * Math.sin(k * 1.3 + t * 9));
+    const off = Math.round(Math.sin(t * 1.9 + k * 0.5) * 1.1 + jolt * Math.sin(k * 1.3 + t * 9));
     for (let y = y0; y < y1; y++) R(g, x + Math.round(off * (y - y0) / (y1 - y0)), y, bw, 1, y < y1 - 4 ? belt.c : belt.d);
     for (let p = 0; p < 2; p++) {
       g.fillStyle = P(p ? car.ring.c : '#5d6266');

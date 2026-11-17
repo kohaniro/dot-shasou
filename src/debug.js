@@ -2,7 +2,7 @@ import { W, state } from './state.js';
 import { world, BIOME_KEYS } from './world.js';
 import { stationAt } from './stations.js';
 import { featureNear, nextFeature } from './features.js';
-import { nextCurve, nextElev } from './course.js';
+import { nextElev } from './course.js';
 import { crossingNear, nextCrossing } from './crossings.js';
 import { wallNear, nextWall } from './closewalls.js';
 import { trainNear, nextTrain } from './trains.js';
@@ -52,7 +52,7 @@ export function beforeFeature(type) {
   return f ? at(f) : null;
 }
 
-/* 次のカーブ・高架・踏切の手前: 始点 a が窓の中央に来る BEFORE ドット手前（state.dist の値）。すでにその地点を過ぎたものは飛ばす。無ければ null */
+/* 次の高架・踏切などの手前: 始点 a が窓の中央に来る BEFORE ドット手前（state.dist の値）。すでにその地点を過ぎたものは飛ばす。無ければ null */
 export function beforeCourse(next) {
   const at = c => c.a - W / 2 - BEFORE;
   let c = next(state.dist + W / 2);
@@ -105,9 +105,8 @@ const PNAME = { run: '巡航', brake: '減速', stop: '停車', depart: '発車'
 function info() {
   const c = state.dist + W / 2, e = world(c), st = state.station, fi = featInfo(c), xi = xingInfo(c), wi = wallInfo(c), ti = trainInfo(c);
   const ws = BIOME_KEYS.filter(k => e[k] >= 0.05).map(k => (BNAME[k] || k) + ' ' + e[k].toFixed(2)).join(' ');
-  const sg = v => (v > 0 ? '+' : '') + v.toFixed(2);
   return `距離 ${Math.floor(state.dist)} ／ ${ws} ／ ${PNAME[state.phase] || state.phase} ${Math.round(state.speed * 0.36)}km/h（目標 ${Math.round(cruiseAt(state.dist, st ? st.pos : Infinity) * 0.36)}）` +
-    ` ／ カーブ ${sg(state.curve)} 高架 ${state.elev.toFixed(2)}` +
+    ` ／ 高架 ${state.elev.toFixed(2)}` +
     (st ? ` ／ ${st.name} まで ${Math.max(0, Math.round(st.pos - state.dist))}` : '') + (fi ? ` ／ ${fi}` : '') + (xi ? ` ／ ${xi}` : '') + (wi ? ` ／ ${wi}` : '') + (ti ? ` ／ ${ti}` : '') + ` ／ 乗客 ${passengers.length}人 ／ 車両 ${carLabel()} ／ ${toneInfo()}`;
 }
 
@@ -133,7 +132,7 @@ export function initDebug(render) {
     const b = document.getElementById('dbg-' + type);
     if (b) b.addEventListener('click', () => { const d = beforeFeature(type); if (d !== null) jump(d); });
   }
-  for (const [id, next] of [['dbg-curve', nextCurve], ['dbg-elev', nextElev], ['dbg-xing', nextCrossing], ['dbg-wall', nextWall], ['dbg-train', nextTrain]]) {
+  for (const [id, next] of [['dbg-elev', nextElev], ['dbg-xing', nextCrossing], ['dbg-wall', nextWall], ['dbg-train', nextTrain]]) {
     const b = document.getElementById(id);
     if (b) b.addEventListener('click', () => { const d = beforeCourse(next); if (d !== null) jump(d); });
   }

@@ -1,7 +1,6 @@
 import { W, SH, state } from './state.js';
 import { hash32, rng } from './rng.js';
 import { world } from './world.js';
-import { heading, HEADING_MAX } from './course.js';
 import { setTone, setGround } from './palette.js';
 import { bakeWeather } from './weather.js';
 import { lightSalt } from './lights.js';
@@ -11,14 +10,14 @@ import { lightSalt } from './lights.js';
 export const tones = { a: null, b: null };
 
 /* ---------- chunked parallax layers ----------
-   f: 視差係数 / pan: カーブで向きが変わるぶん横へ流れる量（course.js の heading に掛ける。遠いほど大きい。0 なら流れない）
+   f: 視差係数
    drop: 高架（elev = 1）のとき下げるドット数（main.js の render() が描く位置をずらす。チャンクの絵は変えない）
    drift: 時間で流れる速さ（ドット/秒。雲だけ）
    air: 奥行きの区分（palette.js の AIR。トーンの色変換が、遠い層ほど空の色になじませる。scenery/index.js が入れる）
    gy / refl / cap: 天気の絵づくり用（scenery/index.js が入れる。weather.js の bakeWeather）。gy は地面の上端（これより下の矩形は、雨・雪のとき
      濡れた地面・積もった雪の色になる。0 = 地面なし）、refl は夜の濡れた地面に灯りを映す行数、cap は上の縁に雪を載せるか
    cache / cacheB: トーン a / b で描いたチャンク。chunk() / render() の b を真にすると cacheB の側を使う */
-export function Layer(id, factor, cw, draw, pan = 0, drop = 0) { this.id = id; this.f = factor; this.cw = cw; this.draw = draw; this.pan = pan; this.drop = drop; this.drift = 0; this.air = 0; this.gy = 0; this.refl = 0; this.cap = false; this.cache = new Map(); this.cacheB = new Map(); }
+export function Layer(id, factor, cw, draw, drop = 0) { this.id = id; this.f = factor; this.cw = cw; this.draw = draw; this.drop = drop; this.drift = 0; this.air = 0; this.gy = 0; this.refl = 0; this.cap = false; this.cache = new Map(); this.cacheB = new Map(); }
 Layer.prototype.chunk = function (i, b = false) {
   const m = b ? this.cacheB : this.cache;
   let c = m.get(i);
@@ -48,22 +47,13 @@ Layer.prototype.render = function (g, off, oy, top, b = false) {
 };
 /* 両方のトーンのチャンクを捨てる（シード・絵柄を替えたとき、トーンを即座に替えたとき） */
 Layer.prototype.clear = function () { this.cache.clear(); this.cacheB.clear(); };
-/* 走行距離 d → レイヤー通しの座標。窓の中央で全レイヤーが同じ地点を指すようにそろえる（遠景だけ先に景色が変わって見えないように）。
-   pan のあるレイヤーは、カーブで向き heading(d) が変わるぶんだけ余計に（または少なく）流れる */
-export const layerX = (L, d) => (d - W / 2) * L.f + W / 2 + (L.pan ? L.pan * heading(d) : 0);
+/* 走行距離 d → レイヤー通しの座標。窓の中央で全レイヤーが同じ地点を指すようにそろえる（遠景だけ先に景色が変わって見えないように） */
+export const layerX = (L, d) => (d - W / 2) * L.f + W / 2;
 /* state.dist = dist のときの描画のオフセット（= layerX(L, dist + W/2) − W/2） */
-export const layerOff = (L, dist) => dist * L.f + (L.pan ? L.pan * heading(dist + W / 2) : 0);
+export const layerOff = (L, dist) => dist * L.f;
 /* いまの画面の描画のオフセット（時間で流れるレイヤーはそのぶんも足す） */
 export const viewOff = L => layerOff(L, state.dist) + (L.drift ? state.t * L.drift : 0);
-/* レイヤー内の位置 → 走行距離（layerX の逆。pan / f × heading の傾き < 1 なので単調。雲は単調でないので使わないこと） */
-export function distAt(L, i, x) {
-  const X = i * L.cw + x, d0 = (X - W / 2) / L.f + W / 2;
-  if (!L.pan) return d0;
-  const k = L.pan / L.f, h0 = heading(d0), d1 = d0 - k * h0;
-  if (heading(d1) === h0) return d1; // d0 と答えが同じ直線区間にある（ほとんどの地点）
-  let lo = d0 - k * HEADING_MAX, hi = d0 + k * HEADING_MAX; // カーブの途中: 二分法
-  for (let n = 0; n < 44; n++) { const m = (lo + hi) / 2; if (layerX(L, m) < X) lo = m; else hi = m; }
-  return (lo + hi) / 2;
-}
+/* レイヤー内の位置 → 走行距離（layerX の逆） */
+export const distAt = (L, i, x) => (i * L.cw + x - W / 2) / L.f + W / 2;
 /* その位置の world()（都市度・バイオームの重みなど） */
 export const env = (L, i, x) => world(distAt(L, i, x));

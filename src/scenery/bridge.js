@@ -32,8 +32,8 @@ const BAND = {       // レイヤー id → 地面の帯: base 地面の上端 /
   3: { base: 59, lev: 3, end: 69, haze: 0.14 },
   4: { base: 68, lev: 6, end: SH, haze: 0 }
 };
-export const toX = (d, f) => Math.round((d - W / 2) * f + W / 2); // 走行距離 → レイヤー通しの x。カーブで流れない層（線路際より手前。pan = 0）用
-const toLX = (L, d) => Math.round(layerX(L, d));                  // 同じことを遠景・中景・近景で（layers.js の distAt の逆。カーブの pan を含む）
+export const toX = (d, f) => Math.round((d - W / 2) * f + W / 2); // 走行距離 → レイヤー通しの x（線路際より手前の層用）
+const toLX = (L, d) => Math.round(layerX(L, d));                  // 同じことを遠景・中景・近景で（layers.js の layerX）
 
 /* ---------- 計画: 橋ごとに1度だけ作る ---------- */
 let planSeed = null; const plans = new Map();

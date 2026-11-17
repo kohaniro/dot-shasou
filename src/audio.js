@@ -2,8 +2,6 @@ import { W, state } from './state.js';
 import { featureMix } from './features.js';
 import { crossingAt } from './crossings.js';
 import { trainAt, TRAIN, TRAIN_F } from './trains.js';
-import { curve } from './course.js';
-import { hash32, vnoise } from './rng.js';
 
 /* ---------- audio (Web Audio 合成) ---------- */
 /* 音量の定数はここにまとめる（耳で確かめていないので、どれも控えめ。調整はこの表だけ触ればよい） */
@@ -30,8 +28,7 @@ export const VOL = {
   crossing: 0.09,   // 踏切の警報音「カンカン」（踏切の真横で）
   trainBlast: 0.4,  // 対向列車: すれ違いの瞬間の風圧「ゴォッ」（ピークで。巡航時）
   trainRun: 0.3,    // 対向列車: 通過中の相手の走行音（巡航時）
-  trainClick: 0.7,  // 対向列車: 相手の台車の継ぎ目「タタン」（巡航時）
-  flange: 0.006     // カーブのフランジ音「キーーー」（いちばんきついカーブ・揺らぎの山で。高い音は耳につくので、ほかよりずっと小さく）
+  trainClick: 0.7   // 対向列車: 相手の台車の継ぎ目「タタン」（巡航時）
 };
 /* トンネルの中での変わり方（どれも featureMix().tunnel に比例して効く） */
 export const TUNNEL = {
@@ -165,41 +162,13 @@ export function vvvfSound(v, pw) {
     grit: V.grit * cw
   };
 }
-/* カーブのフランジ音「キーーー」: きついカーブを走っているあいだ、車輪のフランジがレールにこすれて鳴る高い金属のきしみ。式は flangeSound()
-   音源: 少しずらした正弦波2本（うなり）＋ 2倍音 ＋ 同じ高さの狭帯域ノイズ（ざらつき）に、ゆるいビブラートを掛けたもの。
-   強さは窓の中央の地点の |curve| と速さで決め（カーブの入り・抜けでは |curve| に沿ってなめらかに上下する）、強さと高さを値ノイズ（rng.js の vnoise。
-   シードと state.t から決まる。Math.random は使わない）でゆっくり揺らし、ときどき途切れさせる。高さは区切りごとに modes のどれかへ飛び移る */
-export const FLANGE = {
-  curve: [0.5, 0.92],         // |curve| がこの範囲で 0 → 1（山が 0.45〜0.5 のゆるいカーブでは鳴らない）
-  speed: [12, 32],            // 速さ（km/h）がこの範囲で 0 → 1（きついカーブの巡航は 47〜60 km/h。停車・低速では鳴らさない）
-  modes: [3350, 4180, 2870],  // きしみの高さ（Hz）。modeLen 秒の区切りごとにどれか1つ（車輪の固有振動の飛び移り）
-  modeLen: 2.6,
-  drift: [0.35, 0.025],       // 高さのゆっくりした揺らぎ [速さ（/秒）, ± 割合]
-  vib: [5.3, 0.0035],         // ビブラート [Hz, 深さ（割合）]
-  partials: [[1, 0.5], [1.0045, 0.32], [2, 0.1]], // 正弦波 [高さの比, 音量比]（2本目は 1.0045 倍で十数 Hz のうなり）
-  noise: 2.5, noiseQ: 30,     // 狭帯域ノイズ（白色ノイズのバンドパス）の量と Q
-  wobble: [0.9, 0.55],        // 強さの揺らぎ [速さ（/秒）, 深さ]
-  gap: [1.4, 0.27, 0.12],     // 途切れ [速さ（/秒）, しきい値, なめらかさ]: 値ノイズがしきい値より下の間は鳴らない（時間の約 1／4。1回は 1 秒足らずで、1分に十数回）
-  tc: 0.12                    // 音量・高さの追い方（秒）
-};
-const sstep01 = x => x * x * (3 - 2 * x);
-/* フランジ音の係数（純粋な関数）。c: curve（−1..1）、v: 速度（ドット/秒）、t: 秒（state.t）。level: 0..1、freq: 基本の高さ（Hz） */
-export function flangeSound(c, v, t) {
-  const F = FLANGE, base = sstep01(ramp(Math.abs(c), F.curve)) * sstep01(ramp(Math.max(0, v) * 0.36, F.speed));
-  const freq = F.modes[hash32(state.seed, 9702, Math.floor(t / F.modeLen)) % F.modes.length] * (1 + F.drift[1] * (2 * vnoise(t * F.drift[0], 9703) - 1));
-  if (base <= 0) return { level: 0, freq };
-  const wob = 1 - F.wobble[1] * vnoise(t * F.wobble[0], 9704);
-  const gate = sstep01(ramp(vnoise(t * F.gap[0], 9705), [F.gap[1], F.gap[1] + F.gap[2]]));
-  return { level: base * wob * gate, freq };
-}
 const ramp = (x, [a, b]) => Math.min(1, Math.max(0, (x - a) / (b - a))); // a 以下で 0、b 以上で 1
 const V_CRUISE = 240;
 
 export let ac = null, master = null, white = null, rumbleF = null, motor = null, soundOn = false, volume = 0.6;
 let xingG = null, xingEnv = null, xingOsc = [], xingNext = 0;
 let trBlastG = null, trBlastF = null, trRunG = null, trOn = false, trCur = null; // 対向列車（trCur: { n, axles, i, s } 車軸の予約の続き）
-let vvG = null, vvOsc = [], vvGrit = null;
-let flG = null, flF = null, flOsc = []; // フランジ音（flOsc: 正弦波の { o, d（ビブラートの深さ）, m }） // VVVF（vvOsc: キャリア・その両側2本・上がる音の { o, g }）
+let vvG = null, vvOsc = [], vvGrit = null; // VVVF（vvOsc: キャリア・その両側2本・上がる音の { o, g }）
 let rainG = null, rainF = null, roofG = null, rumbleG = null, windG = null, motorG = null, motorF = null, brakeG = null, brakeF = null, tunG = null, bridgeG = null, echoIn = null;
 export function setSoundOn(v) { soundOn = v; }
 export function setVolume(v) { volume = v; }
@@ -291,16 +260,6 @@ export function initAudio() {
   });
   const vn = loopNoise(white), vb = ac.createBiquadFilter(); vb.type = 'bandpass'; vb.frequency.value = VVVF.carrier; vb.Q.value = VVVF.gritQ;
   vvGrit = ac.createGain(); vvGrit.gain.value = 0; vn.connect(vb); vb.connect(vvGrit); vvGrit.connect(vf); vn.start(0, 0.9);
-  // フランジ音: 正弦波（基本・うなり・2倍音）＋ 狭帯域ノイズ → flG。ビブラートは低い正弦波を各正弦波の周波数へ足す。音量・高さは driveFlange で動かす
-  flG = ac.createGain(); flG.gain.value = 0; flG.connect(master);
-  const fv = ac.createOscillator(); fv.type = 'sine'; fv.frequency.value = FLANGE.vib[0]; fv.start();
-  flOsc = FLANGE.partials.map(([m, a]) => {
-    const o = ac.createOscillator(); o.type = 'sine'; o.frequency.value = FLANGE.modes[0] * m;
-    const d = ac.createGain(); d.gain.value = FLANGE.modes[0] * m * FLANGE.vib[1]; fv.connect(d); d.connect(o.frequency);
-    const g = ac.createGain(); g.gain.value = a; o.connect(g); g.connect(flG); o.start(); return { o, d, m };
-  });
-  const fn = loopNoise(white); flF = ac.createBiquadFilter(); flF.type = 'bandpass'; flF.frequency.value = FLANGE.modes[0]; flF.Q.value = FLANGE.noiseQ;
-  const fng = ac.createGain(); fng.gain.value = FLANGE.noise; fn.connect(flF); flF.connect(fng); fng.connect(flG); fn.start(0, 1.1);
   driveAudio(true);
 }
 const running = () => soundOn && ac && ac.state === 'running' && state.rate === 1; // 早送り中は鳴らさない
@@ -342,7 +301,6 @@ export function driveAudio(now = false) {
     }
     driveCrossing(v, tu, T, tc);
     driveTrain(v, tu, T);
-    driveFlange(v, T);
   } catch (e) { console.warn('driveAudio', e); }
 }
 
@@ -362,16 +320,6 @@ function driveCrossing(v, tu, T, tc) {
     const t = xingNext, e = xingEnv.gain;
     e.setValueAtTime(0, t); e.linearRampToValueAtTime(1, t + 0.003); e.setTargetAtTime(0, t + 0.003, tau);
   }
-}
-
-/* フランジ音: 窓の中央の地点の curve と速さで強さを、state.t で揺らぎを決める。早送り中・音が止まっている間は鳴らさない */
-function driveFlange(v, T) {
-  if (!flG) return;
-  const q = flangeSound(running() ? curve(state.dist + W / 2) : 0, v, state.t), tc = FLANGE.tc;
-  flG.gain.setTargetAtTime(VOL.flange * q.level, T, tc);
-  if (q.level <= 0) return;
-  for (const { o, d, m } of flOsc) { o.frequency.setTargetAtTime(q.freq * m, T, tc); d.gain.setTargetAtTime(q.freq * m * FLANGE.vib[1], T, tc); }
-  flF.frequency.setTargetAtTime(q.freq, T, tc);
 }
 
 /* 対向列車の通過音: 席の位置の trainAt から、風圧・走行音の音量の曲線を step 秒刻みで ahead 秒先まで予約し直し（0.1 秒ごとの呼び出しの
